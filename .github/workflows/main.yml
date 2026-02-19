@@ -1,4 +1,4 @@
-name: Build RISC-V Toolchain for PYNQ (ARM host)
+name: Build PULP RISC-V Toolchain (host=armhf for PYNQ, target=rv32imc)
 
 on:
   workflow_dispatch:
@@ -13,10 +13,12 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Install deps (build + armhf cross + qemu)
+      - name: Install Dependencies (build tools + armhf cross + qemu)
         shell: bash
         run: |
           set -euo pipefail
@@ -30,31 +32,33 @@ jobs:
             binutils-arm-linux-gnueabihf \
             qemu-user-static binfmt-support
 
-      - name: Enable binfmt qemu-arm
+      - name: Enable binfmt for ARM (run armhf binaries on x86 during build)
         shell: bash
         run: |
           set -euo pipefail
           sudo update-binfmts --enable qemu-arm || true
           sudo update-binfmts --display qemu-arm || true
 
-      - name: Clone pulp toolchain
+      - name: Clone RISC-V PULP Toolchain
         shell: bash
         run: |
           set -euo pipefail
           rm -rf pulp-riscv-gnu-toolchain
           git clone --recursive https://github.com/pulp-platform/pulp-riscv-gnu-toolchain.git
 
-      - name: Build (host=armhf, target=riscv32 rv32imc)
+      - name: Build Toolchain (Canadian Cross: build=x86_64, host=armhf, target=riscv32)
         shell: bash
         run: |
           set -euo pipefail
           cd pulp-riscv-gnu-toolchain
 
+          # Produce host binaries for PYNQ (armhf)
           export CC=arm-linux-gnueabihf-gcc
           export CXX=arm-linux-gnueabihf-g++
           export AR=arm-linux-gnueabihf-ar
           export RANLIB=arm-linux-gnueabihf-ranlib
 
+          # Build-time tools must run on the runner (x86_64)
           export CC_FOR_BUILD=gcc
           export CXX_FOR_BUILD=g++
 
@@ -67,23 +71,34 @@ jobs:
 
           sudo -E make -j"$(nproc)"
 
-      - name: Verify tool runs on ARM (binary is ARM)
+      - name: Verify toolchain executable is ARM (will run on PYNQ)
         shell: bash
         run: |
           set -euo pipefail
           BIN=/opt/pulp-riscv/bin/riscv32-unknown-elf-gcc
-          test -x "$BIN"
+          test -x "$BIN" || { echo "ERROR: gcc not found: $BIN"; exit 1; }
           file "$BIN"
-          file "$BIN" | grep -q "ARM" || { echo "Not ARM"; exit 1; }
+          file "$BIN" | grep -q "ARM" || { echo "ERROR: not an ARM binary"; exit 1; }
 
-      - name: Pack
+      - name: Create TAR Archive
         shell: bash
         run: |
           set -euo pipefail
-          tar -czf pulp-toolchain-host-armhf.tar.gz -C /opt pulp-riscv
+          tar -czvf pulp-toolchain-host-armhf.tar.gz -C /opt pulp-riscv
 
-      - name: Upload artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pulp-toolchain-host-armhf
+          name: pulp-riscv-toolchain-host-armhf
           path: pulp-toolchain-host-armhf.tar.gz
+
+      - name: Publish rolling GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest pulp-toolchain-host-armhf.tar.gz \
+            --title "Latest PULP RISC-V Toolchain (host armhf)" \
+            --notes "Toolchain: host=armhf (PYNQ armv7l), target=rv32imc/ilp32. Run ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
