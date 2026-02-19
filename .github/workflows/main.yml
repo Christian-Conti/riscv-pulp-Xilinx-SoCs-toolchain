@@ -42,7 +42,8 @@ jobs:
             autoconf automake autotools-dev curl \
             libmpc-dev libmpfr-dev libgmp-dev gawk build-essential \
             bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev
-          sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+          sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
+            binutils-arm-linux-gnueabihf
 
       - name: Clone RISC-V PULP Toolchain
         shell: bash
@@ -50,17 +51,37 @@ jobs:
           set -euo pipefail
           git clone --recursive https://github.com/pulp-platform/pulp-riscv-gnu-toolchain.git
 
-      - name: Compile Toolchain (Canadian Cross)
+      - name: Compile Toolchain (Canadian Cross for armhf)
         shell: bash
         run: |
           set -euo pipefail
           cd pulp-riscv-gnu-toolchain
+          # Explicitly set host compiler so both ./configure and sudo make use it.
+          # CC_FOR_BUILD stays as native gcc (runs on x86 during the build process).
+          # CC is the host compiler (produces binaries that run on ARM/PYNQ-Z2).
+          export CC=arm-linux-gnueabihf-gcc
+          export CXX=arm-linux-gnueabihf-g++
+          export AR=arm-linux-gnueabihf-ar
+          export RANLIB=arm-linux-gnueabihf-ranlib
+          export CC_FOR_BUILD=gcc
+          export CXX_FOR_BUILD=g++
           ./configure \
             --prefix=/opt/pulp-riscv \
             --host=arm-linux-gnueabihf \
+            --build=x86_64-linux-gnu \
             --with-arch=rv32imc \
             --with-abi=ilp32
-          sudo make -j"$(nproc)"
+          # -E preserves CC/CXX/AR/RANLIB set above through the sudo boundary
+          sudo -E make -j"$(nproc)"
+
+      - name: Verify toolchain binary architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=/opt/pulp-riscv/bin/riscv32-unknown-elf-gcc
+          file "$BIN"
+          file "$BIN" | grep -q "ARM" \
+            || { echo "ERROR: binary is not ARM — Canadian cross failed"; exit 1; }
 
       - name: Create TAR Archive
         shell: bash
