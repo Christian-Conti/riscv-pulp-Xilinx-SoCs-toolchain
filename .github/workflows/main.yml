@@ -9,7 +9,7 @@ jobs:
   build-canadian-cross:
     runs-on: ubuntu-22.04 # Free GitHub server
     steps:
-    - name: 🛠️ Installazione Dipendenze (x86 e ARM)
+    - name: 🛠️ Install Dependancies (x86 e ARM)
       run: |
         sudo apt-get update
         sudo apt-get install -y autoconf automake autotools-dev curl python3 libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev
@@ -22,7 +22,7 @@ jobs:
     - name: 🏗️ Compiling (Canadian Cross)
       run: |
         cd pulp-riscv-gnu-toolchain
-        # Configurazione critica: --host=arm-linux-gnueabihf dice di generare eseguibili per ARM a 32-bit (PYNQ-Z2)
+        # config: --host=arm-linux-gnueabihf (ARM 32bit)
         ./configure --prefix=/opt/pulp-riscv --host=arm-linux-gnueabihf --with-arch=rv32imc --with-abi=ilp32
         sudo make -j$(nproc)
 
