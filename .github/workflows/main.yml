@@ -7,17 +7,55 @@ on:
 
 jobs:
   build-canadian-cross:
-    runs-on: ubuntu-20.04
-    
+    runs-on: ubuntu-22.04
+
     steps:
       - name: 🛒 Checkout Repository
         uses: actions/checkout@v4
 
+      - name: 🐍 Set up Python 3.8 (system default)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: 🔧 Force Python 3.8 as system python (python3/python)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Before:"
+          which python || true
+          which python3 || true
+          python --version || true
+          python3 --version || true
+
+          # actions/setup-python exposes pythonLocation; ensure symlinks in /usr/local/bin
+          # /usr/local/bin typically precedes /usr/bin in PATH on GitHub runners.
+          sudo ln -sf "${pythonLocation}/bin/python"  /usr/local/bin/python
+          sudo ln -sf "${pythonLocation}/bin/python"  /usr/local/bin/python3
+          sudo ln -sf "${pythonLocation}/bin/pip"     /usr/local/bin/pip
+          sudo ln -sf "${pythonLocation}/bin/pip"     /usr/local/bin/pip3
+
+          hash -r
+
+          echo "After:"
+          which python
+          which python3
+          python --version
+          python3 --version
+
       - name: 🛠️ Install Dependencies (x86 and ARM)
         run: |
           sudo apt-get update
-          sudo apt-get install -y autoconf automake autotools-dev curl python3 libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev
+          sudo apt-get install -y \
+            autoconf automake autotools-dev curl \
+            libmpc-dev libmpfr-dev libgmp-dev gawk build-essential \
+            bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev
           sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+
+          # Sanity check that everything still sees Python 3.8
+          python3 --version
+          python --version
 
       - name: 📥 Clone RISC-V PULP Toolchain
         run: |
