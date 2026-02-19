@@ -10,15 +10,15 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: 🛒 Checkout Repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: 🐍 Set up Python 3.8
+      - name: Set up Python 3.8
         uses: actions/setup-python@v5
         with:
           python-version: '3.8'
 
-      - name: 🔧 Force Python 3.8 as system python (python3/python)
+      - name: Force Python 3.8 as system python (python3/python)
         shell: bash
         run: |
           set -euo pipefail
@@ -28,7 +28,7 @@ jobs:
           sudo ln -sf "${pythonLocation}/bin/pip" /usr/local/bin/pip3
           hash -r
 
-      - name: 🛠️ Install Dependencies (x86 and ARM)
+      - name: Install Dependencies (x86 and ARM)
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -37,22 +37,32 @@ jobs:
             bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev
           sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
 
-      - name: 📥 Clone RISC-V PULP Toolchain
+      - name: Clone RISC-V PULP Toolchain
         run: |
           git clone --recursive https://github.com/pulp-platform/pulp-riscv-gnu-toolchain.git
 
-      - name: 🏗️ Compile Toolchain (Canadian Cross)
+      - name: Compile Toolchain (Canadian Cross)
         run: |
           cd pulp-riscv-gnu-toolchain
           ./configure --prefix=/opt/pulp-riscv --host=arm-linux-gnueabihf --with-arch=rv32imc --with-abi=ilp32
           sudo make -j$(nproc)
 
-      - name: 📦 Create TAR Archive
+      - name: Create TAR Archive
         run: |
           tar -czvf pulp-toolchain-armhf.tar.gz -C /opt pulp-riscv
 
-      - name: 🚀 Upload Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: riscv-pulp-toolchain-xilinx
           path: pulp-toolchain-armhf.tar.gz
+
+      - name: Publish rolling GitHub Release
+        run: |
+          gh release delete latest --yes 2>/dev/null || true
+          git push --delete origin latest 2>/dev/null || true
+          gh release create latest pulp-toolchain-armhf.tar.gz \
+            --title "Latest PULP RISC-V Toolchain" \
+            --notes "Auto-built armhf toolchain for PYNQ-Z2. Build ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
