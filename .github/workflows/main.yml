@@ -53,10 +53,11 @@ jobs:
             "${{ matrix.gcc_pkg }}" "${{ matrix.gxx_pkg }}" "${{ matrix.binutils_pkg }}" \
             libgmp-dev libmpfr-dev libmpc-dev
 
-      - name: Enable multiarch for host libs and install host dev libs
+      - name: Enable multiarch and install host (ARM) dev libs
         shell: bash
         run: |
           set -euo pipefail
+
           if [[ "${{ matrix.arch_label }}" == "armhf" ]]; then
             sudo dpkg --add-architecture armhf
             sudo apt-get update
@@ -82,6 +83,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           cat > hello.c <<'EOF'
           #include <stdio.h>
           int main(void){
@@ -134,7 +136,6 @@ jobs:
             --with-arch=rv32imc \
             --with-abi=ilp32
 
-          # Critical: force sub-configures to inherit proper HOST/BUILD
           sudo -E make -j"$(nproc)" HOST="${{ matrix.host_triplet }}" BUILD="x86_64-linux-gnu"
 
       - name: Verify toolchain host binary architecture
@@ -211,4 +212,4 @@ jobs:
             --title "Latest PULP RISC-V Toolchain (ARM hosts, X-HEEP rv32)" \
             --notes "Toolchains: host=armhf + aarch64, target=X-HEEP RISC-V 32-bit (rv32imc/ilp32). Run ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}"
