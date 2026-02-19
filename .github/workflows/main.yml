@@ -4,17 +4,24 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '0 2 1 * *'  # 1st of the month 2 am
-
+    
 jobs:
   build-canadian-cross:
-    runs-on: ubuntu-22.04 # Free GitHub server
+    runs-on: ubuntu-22.04
     steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python 3.8
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.8'
+    
     - name: 🛠️ Install Dependancies (x86 e ARM)
       run: |
         sudo apt-get update
         sudo apt-get install -y autoconf automake autotools-dev curl python3 libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev
         sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
-
+          
     - name: 📥 RISC-V PULP Toolchain
       run: |
         git clone --recursive https://github.com/pulp-platform/pulp-riscv-gnu-toolchain.git
