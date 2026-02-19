@@ -11,7 +11,7 @@ This repository automates the build process of the [PULP RISC-V GNU Toolchain](h
 ### 1a. Manually Generate the Toolchain
 1. Go to the **Actions** tab in this repository.
 2. Select the **Build RISC-V PULP Toolchain for Xilinx SoCs** workflow.
-3. Click **Run workflow** to start the compilation (note: this process takes about 1 to 2 hours).
+3. Click **Run workflow** to start the compilation.
 
 ### 1b. Automatically Generate the Toolchain
 1. Each 1st of the month at 2am the workflow starts automatically.
