@@ -3,7 +3,10 @@ name: Build RISC-V PULP Toolchain for Xilinx SoCs
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 2 1 * *'  # 1st of the month at 2 AM
+    - cron: '0 2 1 * *'
+
+permissions:
+  contents: write
 
 jobs:
   build-canadian-cross:
@@ -12,6 +15,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python 3.8
         uses: actions/setup-python@v5
@@ -29,7 +34,9 @@ jobs:
           hash -r
 
       - name: Install Dependencies (x86 and ARM)
+        shell: bash
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y \
             autoconf automake autotools-dev curl \
@@ -38,17 +45,27 @@ jobs:
           sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
 
       - name: Clone RISC-V PULP Toolchain
+        shell: bash
         run: |
+          set -euo pipefail
           git clone --recursive https://github.com/pulp-platform/pulp-riscv-gnu-toolchain.git
 
       - name: Compile Toolchain (Canadian Cross)
+        shell: bash
         run: |
+          set -euo pipefail
           cd pulp-riscv-gnu-toolchain
-          ./configure --prefix=/opt/pulp-riscv --host=arm-linux-gnueabihf --with-arch=rv32imc --with-abi=ilp32
-          sudo make -j$(nproc)
+          ./configure \
+            --prefix=/opt/pulp-riscv \
+            --host=arm-linux-gnueabihf \
+            --with-arch=rv32imc \
+            --with-abi=ilp32
+          sudo make -j"$(nproc)"
 
       - name: Create TAR Archive
+        shell: bash
         run: |
+          set -euo pipefail
           tar -czvf pulp-toolchain-armhf.tar.gz -C /opt pulp-riscv
 
       - name: Upload Artifact
@@ -58,9 +75,10 @@ jobs:
           path: pulp-toolchain-armhf.tar.gz
 
       - name: Publish rolling GitHub Release
+        shell: bash
         run: |
-          gh release delete latest --yes 2>/dev/null || true
-          git push --delete origin latest 2>/dev/null || true
+          set -euo pipefail
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
           gh release create latest pulp-toolchain-armhf.tar.gz \
             --title "Latest PULP RISC-V Toolchain" \
             --notes "Auto-built armhf toolchain for PYNQ-Z2. Build ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
