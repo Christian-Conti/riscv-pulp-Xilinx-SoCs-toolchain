@@ -15,6 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # 32-bit ARM host (Zynq-7000 / PYNQ-Z2, uname -m => armv7l)
           - host_triplet: arm-linux-gnueabihf
             arch_label: armhf
             gcc_pkg: gcc-arm-linux-gnueabihf
@@ -22,6 +23,8 @@ jobs:
             binutils_pkg: binutils-arm-linux-gnueabihf
             qemu_binfmt: qemu-arm
             file_grep: "ARM"
+
+          # 64-bit ARM host (Zynq UltraScale+ MPSoC, uname -m => aarch64)
           - host_triplet: aarch64-linux-gnu
             arch_label: aarch64
             gcc_pkg: gcc-aarch64-linux-gnu
@@ -36,18 +39,38 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Dependencies (build tools + cross + qemu)
+      - name: Install base dependencies (build tools + qemu + cross compiler)
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y \
             autoconf automake autotools-dev curl \
-            libmpc-dev libmpfr-dev libgmp-dev gawk build-essential \
-            bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev \
+            gawk build-essential bison flex texinfo gperf libtool patchutils bc \
+            zlib1g-dev libexpat-dev \
             git ca-certificates \
             qemu-user-static binfmt-support \
-            "${{ matrix.gcc_pkg }}" "${{ matrix.gxx_pkg }}" "${{ matrix.binutils_pkg }}"
+            "${{ matrix.gcc_pkg }}" "${{ matrix.gxx_pkg }}" "${{ matrix.binutils_pkg }}" \
+            # Keep native dev libs for build-time tools on x86
+            libgmp-dev libmpfr-dev libmpc-dev
+
+      - name: Enable multiarch for host libs and install host dev libs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.arch_label }}" == "armhf" ]]; then
+            sudo dpkg --add-architecture armhf
+            sudo apt-get update
+            sudo apt-get install -y \
+              libgmp-dev:armhf libmpfr-dev:armhf libmpc-dev:armhf \
+              zlib1g-dev:armhf libexpat1-dev:armhf
+          else
+            sudo dpkg --add-architecture arm64
+            sudo apt-get update
+            sudo apt-get install -y \
+              libgmp-dev:arm64 libmpfr-dev:arm64 libmpc-dev:arm64 \
+              zlib1g-dev:arm64 libexpat1-dev:arm64
+          fi
 
       - name: Enable binfmt for ${{ matrix.qemu_binfmt }}
         shell: bash
@@ -56,6 +79,32 @@ jobs:
           sudo update-binfmts --enable "${{ matrix.qemu_binfmt }}" || true
           sudo update-binfmts --display "${{ matrix.qemu_binfmt }}" || true
 
+      - name: Verify QEMU binfmt works (sanity check)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > hello.c <<'EOF'
+          #include <stdio.h>
+          int main(void){
+          #if defined(__aarch64__)
+            puts("hello-aarch64");
+          #else
+            puts("hello-armhf");
+          #endif
+            return 0;
+          }
+          EOF
+
+          if [[ "${{ matrix.arch_label }}" == "armhf" ]]; then
+            arm-linux-gnueabihf-gcc hello.c -o hello_host
+            file hello_host
+            ./hello_host | grep -q "hello-armhf"
+          else
+            aarch64-linux-gnu-gcc hello.c -o hello_host
+            file hello_host
+            ./hello_host | grep -q "hello-aarch64"
+          fi
+
       - name: Clone RISC-V PULP Toolchain
         shell: bash
         run: |
@@ -63,19 +112,17 @@ jobs:
           rm -rf pulp-riscv-gnu-toolchain
           git clone --recursive https://github.com/pulp-platform/pulp-riscv-gnu-toolchain.git
 
-      - name: Build Toolchain (host=${{ matrix.host_triplet }}, target=riscv32 X-HEEP rv32imc)
+      - name: Configure + Build (host=${{ matrix.host_triplet }}, target=X-HEEP rv32imc)
         shell: bash
         run: |
           set -euo pipefail
           cd pulp-riscv-gnu-toolchain
 
-          # Host binaries (will run on the board: armhf or aarch64)
           export CC="${{ matrix.host_triplet }}-gcc"
           export CXX="${{ matrix.host_triplet }}-g++"
           export AR="${{ matrix.host_triplet }}-ar"
           export RANLIB="${{ matrix.host_triplet }}-ranlib"
 
-          # Build-time tools (must run on the x86_64 runner)
           export CC_FOR_BUILD=gcc
           export CXX_FOR_BUILD=g++
 
@@ -84,13 +131,14 @@ jobs:
           ./configure \
             --prefix="${PREFIX}" \
             --host="${{ matrix.host_triplet }}" \
-            --build=x86_64-linux-gnu \
+            --build="x86_64-linux-gnu" \
             --with-arch=rv32imc \
             --with-abi=ilp32
 
-          sudo -E make -j"$(nproc)"
+          # Critical: force sub-configures to inherit proper HOST/BUILD
+          sudo -E make -j"$(nproc)" HOST="${{ matrix.host_triplet }}" BUILD="x86_64-linux-gnu"
 
-      - name: Verify toolchain binary architecture (must match host)
+      - name: Verify toolchain host binary architecture
         shell: bash
         run: |
           set -euo pipefail
@@ -99,6 +147,23 @@ jobs:
           test -x "$BIN" || { echo "ERROR: gcc not found at $BIN"; exit 1; }
           file "$BIN"
           file "$BIN" | grep -Eqi "${{ matrix.file_grep }}" || { echo "ERROR: host arch mismatch"; exit 1; }
+
+      - name: Verify toolchain produces RISC-V 32-bit ELF
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREFIX="/opt/pulp-riscv-${{ matrix.arch_label }}"
+          export PATH="${PREFIX}/bin:${PATH}"
+
+          cat > rvtest.c <<'EOF'
+          int add(int a,int b){ return a+b; }
+          int main(void){ return add(1,2); }
+          EOF
+
+          riscv32-unknown-elf-gcc -march=rv32imc -mabi=ilp32 -nostdlib -Wl,--no-relax -o rvtest.elf rvtest.c
+          file rvtest.elf
+          file rvtest.elf | grep -qi "ELF 32-bit" || { echo "ERROR: not 32-bit ELF"; exit 1; }
+          readelf -h rvtest.elf | grep -qi "Machine: RISC-V" || { echo "ERROR: not RISC-V"; exit 1; }
 
       - name: Create TAR Archive
         shell: bash
@@ -112,6 +177,13 @@ jobs:
         with:
           name: pulp-toolchain-host-${{ matrix.arch_label }}-xheep-rv32imc
           path: pulp-toolchain-host-${{ matrix.arch_label }}-xheep-rv32imc.tar.gz
+
+      - name: Dump config.log on failure
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          find pulp-riscv-gnu-toolchain -name config.log -maxdepth 7 -print -exec tail -n 200 {} \; || true
 
   publish-rolling-release:
     needs: build-toolchain
@@ -138,6 +210,6 @@ jobs:
             pulp-toolchain-host-armhf-xheep-rv32imc.tar.gz \
             pulp-toolchain-host-aarch64-xheep-rv32imc.tar.gz \
             --title "Latest PULP RISC-V Toolchain (ARM hosts, X-HEEP rv32)" \
-            --notes "Toolchains for ARM boards (armhf + aarch64). Target: X-HEEP RISC-V 32-bit (rv32imc/ilp32). Run ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
+            --notes "Toolchains: host=armhf + aarch64, target=X-HEEP RISC-V 32-bit (rv32imc/ilp32). Run ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
