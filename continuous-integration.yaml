@@ -1,0 +1,37 @@
+name: Build RISC-V PULP Toolchain for Xilinx SoCs
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 1 * *'  # 1st of the month 2 am
+
+jobs:
+  build-canadian-cross:
+    runs-on: ubuntu-22.04 # Free GitHub server
+    steps:
+    - name: 🛠️ Installazione Dipendenze (x86 e ARM)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y autoconf automake autotools-dev curl python3 libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev
+        sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+
+    - name: 📥 RISC-V PULP Toolchain
+      run: |
+        git clone --recursive https://github.com/pulp-platform/pulp-riscv-gnu-toolchain.git
+
+    - name: 🏗️ Compiling (Canadian Cross)
+      run: |
+        cd pulp-riscv-gnu-toolchain
+        # Configurazione critica: --host=arm-linux-gnueabihf dice di generare eseguibili per ARM a 32-bit (PYNQ-Z2)
+        ./configure --prefix=/opt/pulp-riscv --host=arm-linux-gnueabihf --with-arch=rv32imc --with-abi=ilp32
+        sudo make -j$(nproc)
+
+    - name: 📦 TAR
+      run: |
+        tar -czvf pulp-toolchain-armhf.tar.gz -C /opt pulp-riscv
+
+    - name: 🚀 Upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: riscv-pulp-toolchain-xilinx
+        path: pulp-toolchain-armhf.tar.gz
