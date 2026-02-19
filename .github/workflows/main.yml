@@ -53,22 +53,57 @@ jobs:
             "${{ matrix.gcc_pkg }}" "${{ matrix.gxx_pkg }}" "${{ matrix.binutils_pkg }}" \
             libgmp-dev libmpfr-dev libmpc-dev
 
-      - name: Enable multiarch + add Ubuntu Ports (jammy) for foreign arch
+      - name: Configure APT sources for multiarch (amd64-only main repos + ports for foreign arch)
         shell: bash
         run: |
           set -euo pipefail
 
+          # 1) Ensure the default Ubuntu sources are restricted to amd64,
+          #    so apt won't try to fetch armhf/arm64 indices from security.ubuntu.com (404).
+          #    GitHub runners on 22.04 commonly use deb822 sources at /etc/apt/sources.list.d/ubuntu.sources
+          if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
+            sudo cp -a /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.bak
+
+            # Try to reuse existing Signed-By if present; fall back to standard ubuntu keyring.
+            SIGNED_BY="$(awk -F': ' 'tolower($1)=="signed-by"{print $2; exit}' /etc/apt/sources.list.d/ubuntu.sources || true)"
+            if [[ -z "${SIGNED_BY}" ]]; then
+              SIGNED_BY="/usr/share/keyrings/ubuntu-archive-keyring.gpg"
+            fi
+
+            sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null <<EOF
+            Types: deb
+            URIs: http://archive.ubuntu.com/ubuntu
+            Suites: jammy jammy-updates jammy-backports
+            Components: main restricted universe multiverse
+            Architectures: amd64
+            Signed-By: ${SIGNED_BY}
+
+            Types: deb
+            URIs: http://security.ubuntu.com/ubuntu
+            Suites: jammy-security
+            Components: main restricted universe multiverse
+            Architectures: amd64
+            Signed-By: ${SIGNED_BY}
+EOF
+          else
+            # Fallback for older layout (sources.list): force amd64 only on existing lines
+            sudo cp -a /etc/apt/sources.list /etc/apt/sources.list.bak || true
+            if [[ -f /etc/apt/sources.list ]]; then
+              sudo sed -i -E 's/^deb(\s+)/deb [arch=amd64]\1/' /etc/apt/sources.list
+            fi
+          fi
+
+          # 2) Enable the foreign architecture
           sudo dpkg --add-architecture "${{ matrix.foreign_arch }}"
 
-          # Add ports.ubuntu.com entries for the foreign architecture only.
-          # Without this, apt will try archive/security.ubuntu.com which do not serve armhf/arm64 on amd64 runners.
+          # 3) Add Ubuntu Ports for the foreign arch (jammy) only
           LIST="/etc/apt/sources.list.d/ubuntu-ports-${{ matrix.foreign_arch }}.list"
           sudo tee "${LIST}" >/dev/null <<EOF
           deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
           deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
           deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
           deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse
-          EOF
+EOF
 
           sudo apt-get update -y --allow-releaseinfo-change
 
@@ -145,7 +180,6 @@ jobs:
             --with-arch=rv32imc \
             --with-abi=ilp32
 
-          # Force sub-configures to inherit the right host/build (prevents "cannot run C compiled programs")
           sudo -E make -j"$(nproc)" HOST="${{ matrix.host_triplet }}" BUILD="x86_64-linux-gnu"
 
       - name: Verify toolchain host binary architecture
