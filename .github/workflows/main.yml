@@ -13,7 +13,7 @@ jobs:
       - name: 🛒 Checkout Repository
         uses: actions/checkout@v4
 
-      - name: 🐍 Set up Python 3.8 (system default)
+      - name: 🐍 Set up Python 3.8
         uses: actions/setup-python@v5
         with:
           python-version: '3.8'
@@ -22,27 +22,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "Before:"
-          which python || true
-          which python3 || true
-          python --version || true
-          python3 --version || true
-
-          # actions/setup-python exposes pythonLocation; ensure symlinks in /usr/local/bin
-          # /usr/local/bin typically precedes /usr/bin in PATH on GitHub runners.
-          sudo ln -sf "${pythonLocation}/bin/python"  /usr/local/bin/python
-          sudo ln -sf "${pythonLocation}/bin/python"  /usr/local/bin/python3
-          sudo ln -sf "${pythonLocation}/bin/pip"     /usr/local/bin/pip
-          sudo ln -sf "${pythonLocation}/bin/pip"     /usr/local/bin/pip3
-
+          sudo ln -sf "${pythonLocation}/bin/python" /usr/local/bin/python
+          sudo ln -sf "${pythonLocation}/bin/python" /usr/local/bin/python3
+          sudo ln -sf "${pythonLocation}/bin/pip" /usr/local/bin/pip
+          sudo ln -sf "${pythonLocation}/bin/pip" /usr/local/bin/pip3
           hash -r
-
-          echo "After:"
-          which python
-          which python3
-          python --version
-          python3 --version
 
       - name: 🛠️ Install Dependencies (x86 and ARM)
         run: |
@@ -53,10 +37,6 @@ jobs:
             bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev
           sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
 
-          # Sanity check that everything still sees Python 3.8
-          python3 --version
-          python --version
-
       - name: 📥 Clone RISC-V PULP Toolchain
         run: |
           git clone --recursive https://github.com/pulp-platform/pulp-riscv-gnu-toolchain.git
@@ -64,7 +44,6 @@ jobs:
       - name: 🏗️ Compile Toolchain (Canadian Cross)
         run: |
           cd pulp-riscv-gnu-toolchain
-          # Config for ARM 32-bit host
           ./configure --prefix=/opt/pulp-riscv --host=arm-linux-gnueabihf --with-arch=rv32imc --with-abi=ilp32
           sudo make -j$(nproc)
 
