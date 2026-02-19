@@ -59,7 +59,7 @@ jobs:
           set -euo pipefail
           cd pulp-riscv-gnu-toolchain
 
-          # CC/CXX → ARM cross-compiler: produce binaries that RUN on PYNQ-Z2 (armhf)
+          # CC/CXX → ARM cross-compiler: produce binaries that RUN on armhf
           # CC_FOR_BUILD/CXX_FOR_BUILD → native gcc: compile internal build-time tools
           export CC=arm-linux-gnueabihf-gcc
           export CXX=arm-linux-gnueabihf-g++
@@ -107,6 +107,6 @@ jobs:
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
           gh release create latest pulp-toolchain-armhf.tar.gz \
             --title "Latest PULP RISC-V Toolchain" \
-            --notes "Auto-built armhf toolchain for PYNQ-Z2 (rv32imc target). Build ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
+            --notes "Auto-built armhf toolchain for rv32imc. Build ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
