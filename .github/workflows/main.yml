@@ -15,18 +15,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 32-bit ARM host (Zynq-7000 / PYNQ-Z2, uname -m => armv7l)
           - host_triplet: arm-linux-gnueabihf
             arch_label: armhf
+            foreign_arch: armhf
             gcc_pkg: gcc-arm-linux-gnueabihf
             gxx_pkg: g++-arm-linux-gnueabihf
             binutils_pkg: binutils-arm-linux-gnueabihf
             qemu_binfmt: qemu-arm
             file_grep: "ARM"
 
-          # 64-bit ARM host (Zynq UltraScale+ MPSoC, uname -m => aarch64)
           - host_triplet: aarch64-linux-gnu
             arch_label: aarch64
+            foreign_arch: arm64
             gcc_pkg: gcc-aarch64-linux-gnu
             gxx_pkg: g++-aarch64-linux-gnu
             binutils_pkg: binutils-aarch64-linux-gnu
@@ -43,7 +43,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
+          sudo apt-get update -y
           sudo apt-get install -y \
             autoconf automake autotools-dev curl \
             gawk build-essential bison flex texinfo gperf libtool patchutils bc \
@@ -53,24 +53,35 @@ jobs:
             "${{ matrix.gcc_pkg }}" "${{ matrix.gxx_pkg }}" "${{ matrix.binutils_pkg }}" \
             libgmp-dev libmpfr-dev libmpc-dev
 
-      - name: Enable multiarch and install host (ARM) dev libs
+      - name: Enable multiarch + add Ubuntu Ports (jammy) for foreign arch
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ "${{ matrix.arch_label }}" == "armhf" ]]; then
-            sudo dpkg --add-architecture armhf
-            sudo apt-get update
-            sudo apt-get install -y \
-              libgmp-dev:armhf libmpfr-dev:armhf libmpc-dev:armhf \
-              zlib1g-dev:armhf libexpat1-dev:armhf
-          else
-            sudo dpkg --add-architecture arm64
-            sudo apt-get update
-            sudo apt-get install -y \
-              libgmp-dev:arm64 libmpfr-dev:arm64 libmpc-dev:arm64 \
-              zlib1g-dev:arm64 libexpat1-dev:arm64
-          fi
+          sudo dpkg --add-architecture "${{ matrix.foreign_arch }}"
+
+          # Add ports.ubuntu.com entries for the foreign architecture only.
+          # Without this, apt will try archive/security.ubuntu.com which do not serve armhf/arm64 on amd64 runners.
+          LIST="/etc/apt/sources.list.d/ubuntu-ports-${{ matrix.foreign_arch }}.list"
+          sudo tee "${LIST}" >/dev/null <<EOF
+          deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
+          deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
+          deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
+          deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse
+          EOF
+
+          sudo apt-get update -y --allow-releaseinfo-change
+
+      - name: Install host (foreign-arch) dev libs needed by GCC/binutils
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y \
+            "libgmp-dev:${{ matrix.foreign_arch }}" \
+            "libmpfr-dev:${{ matrix.foreign_arch }}" \
+            "libmpc-dev:${{ matrix.foreign_arch }}" \
+            "zlib1g-dev:${{ matrix.foreign_arch }}" \
+            "libexpat1-dev:${{ matrix.foreign_arch }}"
 
       - name: Enable binfmt for ${{ matrix.qemu_binfmt }}
         shell: bash
@@ -83,7 +94,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           cat > hello.c <<'EOF'
           #include <stdio.h>
           int main(void){
@@ -123,7 +133,6 @@ jobs:
           export CXX="${{ matrix.host_triplet }}-g++"
           export AR="${{ matrix.host_triplet }}-ar"
           export RANLIB="${{ matrix.host_triplet }}-ranlib"
-
           export CC_FOR_BUILD=gcc
           export CXX_FOR_BUILD=g++
 
@@ -136,6 +145,7 @@ jobs:
             --with-arch=rv32imc \
             --with-abi=ilp32
 
+          # Force sub-configures to inherit the right host/build (prevents "cannot run C compiled programs")
           sudo -E make -j"$(nproc)" HOST="${{ matrix.host_triplet }}" BUILD="x86_64-linux-gnu"
 
       - name: Verify toolchain host binary architecture
@@ -212,4 +222,4 @@ jobs:
             --title "Latest PULP RISC-V Toolchain (ARM hosts, X-HEEP rv32)" \
             --notes "Toolchains: host=armhf + aarch64, target=X-HEEP RISC-V 32-bit (rv32imc/ilp32). Run ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
