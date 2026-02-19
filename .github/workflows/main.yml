@@ -33,7 +33,7 @@ jobs:
           sudo ln -sf "${pythonLocation}/bin/pip" /usr/local/bin/pip3
           hash -r
 
-      - name: Install Dependencies (x86 and ARM)
+      - name: Install Dependencies (x86)
         shell: bash
         run: |
           set -euo pipefail
@@ -44,18 +44,6 @@ jobs:
             bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev \
             git ca-certificates
 
-          # Cross compiler + binutils for armhf host tools
-          sudo apt-get install -y \
-            gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
-            binutils-arm-linux-gnueabihf
-
-          # QEMU user-mode to run armhf binaries on x86_64 during the build
-          sudo apt-get install -y \
-            qemu-user-static binfmt-support libc6-armhf-cross
-
-          # Enable transparent execution of armhf binaries via binfmt_misc
-          sudo update-binfmts --enable qemu-arm || true
-
       - name: Clone RISC-V PULP Toolchain
         shell: bash
         run: |
@@ -63,51 +51,39 @@ jobs:
           rm -rf pulp-riscv-gnu-toolchain
           git clone --recursive https://github.com/pulp-platform/pulp-riscv-gnu-toolchain.git
 
-      - name: Compile Toolchain (Canadian Cross for armhf)
+      - name: Compile Toolchain (native x86_64 host, rv32imc)
         shell: bash
         run: |
           set -euo pipefail
           cd pulp-riscv-gnu-toolchain
 
-          # Install prefix (no sudo). We'll pack this directory as artifact.
+          # Install under workspace to avoid sudo; we pack it as if it were /opt/pulp-riscv
           PREFIX="${GITHUB_WORKSPACE}/opt/pulp-riscv"
-          rm -rf "${PREFIX}"
+          rm -rf "${GITHUB_WORKSPACE}/opt"
           mkdir -p "${PREFIX}"
-
-          # Explicitly set host compiler so both ./configure and make use it.
-          # CC_FOR_BUILD stays as native gcc (runs on x86 during the build process).
-          # CC is the host compiler (produces binaries that run on ARM/PYNQ-Z2).
-          export CC=arm-linux-gnueabihf-gcc
-          export CXX=arm-linux-gnueabihf-g++
-          export AR=arm-linux-gnueabihf-ar
-          export RANLIB=arm-linux-gnueabihf-ranlib
-          export CC_FOR_BUILD=gcc
-          export CXX_FOR_BUILD=g++
-
-          # Allow running dynamically-linked armhf host tools under qemu during build
-          export QEMU_LD_PREFIX=/usr/arm-linux-gnueabihf
 
           ./configure \
             --prefix="${PREFIX}" \
-            --host=arm-linux-gnueabihf \
-            --build=x86_64-linux-gnu \
             --with-arch=rv32imc \
             --with-abi=ilp32
 
           make -j"$(nproc)"
 
-      - name: Verify toolchain binary architecture
+      - name: Verify toolchain host and target
         shell: bash
         run: |
           set -euo pipefail
           BIN="${GITHUB_WORKSPACE}/opt/pulp-riscv/bin/riscv32-unknown-elf-gcc"
-          file "$BIN"
-          file "$BIN" | grep -q "ARM" \
-            || { echo "ERROR: binary is not ARM — Canadian cross failed"; exit 1; }
+          test -x "$BIN" || { echo "ERROR: gcc not found at $BIN"; exit 1; }
 
-          # Optional smoke test (runs via qemu if binfmt is active)
-          export QEMU_LD_PREFIX=/usr/arm-linux-gnueabihf
-          "$BIN" --version | head -n 2 || true
+          # Host must be x86_64 now
+          file "$BIN"
+          file "$BIN" | grep -q "x86-64" \
+            || { echo "ERROR: binary is not x86_64 — expected native host toolchain"; exit 1; }
+
+          # Sanity: can it run and report correct target?
+          "$BIN" -dumpmachine | grep -q "riscv32-unknown-elf" \
+            || { echo "ERROR: unexpected target triplet"; exit 1; }
 
       - name: Create TAR Archive
         shell: bash
@@ -119,7 +95,6 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          # Keep your artifact name
           name: riscv-pulp-toolchain-xilinx
           path: pulp-toolchain-armhf.tar.gz
 
@@ -130,6 +105,6 @@ jobs:
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
           gh release create latest pulp-toolchain-armhf.tar.gz \
             --title "Latest PULP RISC-V Toolchain" \
-            --notes "Auto-built armhf toolchain for Xilinx SoCs. Build ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
+            --notes "Auto-built toolchain (x86_64 host) for producing rv32imc binaries. Build ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
