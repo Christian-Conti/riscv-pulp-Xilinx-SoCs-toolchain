@@ -33,7 +33,7 @@ jobs:
           sudo ln -sf "${pythonLocation}/bin/pip" /usr/local/bin/pip3
           hash -r
 
-      - name: Install Dependencies (x86)
+      - name: Install Dependencies (x86 build tools + ARM host cross-compiler)
         shell: bash
         run: |
           set -euo pipefail
@@ -42,7 +42,9 @@ jobs:
             autoconf automake autotools-dev curl \
             libmpc-dev libmpfr-dev libgmp-dev gawk build-essential \
             bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev \
-            git ca-certificates
+            git ca-certificates \
+            gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
+            binutils-arm-linux-gnueabihf
 
       - name: Clone RISC-V PULP Toolchain
         shell: bash
@@ -51,46 +53,46 @@ jobs:
           rm -rf pulp-riscv-gnu-toolchain
           git clone --recursive https://github.com/pulp-platform/pulp-riscv-gnu-toolchain.git
 
-      - name: Compile Toolchain (native x86_64 host, rv32imc)
+      - name: Compile Toolchain (Canadian Cross: host=armhf, target=rv32imc)
         shell: bash
         run: |
           set -euo pipefail
           cd pulp-riscv-gnu-toolchain
 
-          # Install under workspace to avoid sudo; we pack it as if it were /opt/pulp-riscv
-          PREFIX="${GITHUB_WORKSPACE}/opt/pulp-riscv"
-          rm -rf "${GITHUB_WORKSPACE}/opt"
-          mkdir -p "${PREFIX}"
+          # CC/CXX → ARM cross-compiler: produce binaries that RUN on PYNQ-Z2 (armhf)
+          # CC_FOR_BUILD/CXX_FOR_BUILD → native gcc: compile internal build-time tools
+          export CC=arm-linux-gnueabihf-gcc
+          export CXX=arm-linux-gnueabihf-g++
+          export AR=arm-linux-gnueabihf-ar
+          export RANLIB=arm-linux-gnueabihf-ranlib
+          export CC_FOR_BUILD=gcc
+          export CXX_FOR_BUILD=g++
 
           ./configure \
-            --prefix="${PREFIX}" \
+            --prefix=/opt/pulp-riscv \
+            --host=arm-linux-gnueabihf \
+            --build=x86_64-linux-gnu \
             --with-arch=rv32imc \
             --with-abi=ilp32
 
-          make -j"$(nproc)"
+          # -E preserves CC/CXX through the sudo boundary
+          sudo -E make -j"$(nproc)"
 
-      - name: Verify toolchain host and target
+      - name: Verify toolchain binary architecture
         shell: bash
         run: |
           set -euo pipefail
-          BIN="${GITHUB_WORKSPACE}/opt/pulp-riscv/bin/riscv32-unknown-elf-gcc"
-          test -x "$BIN" || { echo "ERROR: gcc not found at $BIN"; exit 1; }
-
-          # Host must be x86_64 now
+          BIN=/opt/pulp-riscv/bin/riscv32-unknown-elf-gcc
+          test -x "$BIN" || { echo "ERROR: gcc not found"; exit 1; }
           file "$BIN"
-          file "$BIN" | grep -q "x86-64" \
-            || { echo "ERROR: binary is not x86_64 — expected native host toolchain"; exit 1; }
-
-          # Sanity: can it run and report correct target?
-          "$BIN" -dumpmachine | grep -q "riscv32-unknown-elf" \
-            || { echo "ERROR: unexpected target triplet"; exit 1; }
+          file "$BIN" | grep -q "ARM" \
+            || { echo "ERROR: binary is not ARM — Canadian cross failed"; exit 1; }
 
       - name: Create TAR Archive
         shell: bash
         run: |
           set -euo pipefail
-          # Keep your archive name
-          tar -czvf pulp-toolchain-armhf.tar.gz -C "${GITHUB_WORKSPACE}/opt" pulp-riscv
+          tar -czvf pulp-toolchain-armhf.tar.gz -C /opt pulp-riscv
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -105,6 +107,6 @@ jobs:
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
           gh release create latest pulp-toolchain-armhf.tar.gz \
             --title "Latest PULP RISC-V Toolchain" \
-            --notes "Auto-built toolchain (x86_64 host) for producing rv32imc binaries. Build ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
+            --notes "Auto-built armhf toolchain for PYNQ-Z2 (rv32imc target). Build ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
