@@ -1,4 +1,4 @@
-name: Build RISC-V PULP Toolchain for Xilinx SoCs
+name: Build RISC-V Toolchain for PYNQ (ARM host)
 
 on:
   workflow_dispatch:
@@ -9,31 +9,14 @@ permissions:
   contents: write
 
 jobs:
-  build-canadian-cross:
+  build-toolchain-host-armhf:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Set up Python 3.8
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.8'
-
-      - name: Force Python 3.8 as system python (python3/python)
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo ln -sf "${pythonLocation}/bin/python" /usr/local/bin/python
-          sudo ln -sf "${pythonLocation}/bin/python" /usr/local/bin/python3
-          sudo ln -sf "${pythonLocation}/bin/pip" /usr/local/bin/pip
-          sudo ln -sf "${pythonLocation}/bin/pip" /usr/local/bin/pip3
-          hash -r
-
-      - name: Install Dependencies (x86 build tools + ARM host cross-compiler)
+      - name: Install deps (build + armhf cross + qemu)
         shell: bash
         run: |
           set -euo pipefail
@@ -44,27 +27,34 @@ jobs:
             bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev \
             git ca-certificates \
             gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
-            binutils-arm-linux-gnueabihf
+            binutils-arm-linux-gnueabihf \
+            qemu-user-static binfmt-support
 
-      - name: Clone RISC-V PULP Toolchain
+      - name: Enable binfmt qemu-arm
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo update-binfmts --enable qemu-arm || true
+          sudo update-binfmts --display qemu-arm || true
+
+      - name: Clone pulp toolchain
         shell: bash
         run: |
           set -euo pipefail
           rm -rf pulp-riscv-gnu-toolchain
           git clone --recursive https://github.com/pulp-platform/pulp-riscv-gnu-toolchain.git
 
-      - name: Compile Toolchain (Canadian Cross: host=armhf, target=rv32imc)
+      - name: Build (host=armhf, target=riscv32 rv32imc)
         shell: bash
         run: |
           set -euo pipefail
           cd pulp-riscv-gnu-toolchain
 
-          # CC/CXX → ARM cross-compiler: produce binaries that RUN on armhf
-          # CC_FOR_BUILD/CXX_FOR_BUILD → native gcc: compile internal build-time tools
           export CC=arm-linux-gnueabihf-gcc
           export CXX=arm-linux-gnueabihf-g++
           export AR=arm-linux-gnueabihf-ar
           export RANLIB=arm-linux-gnueabihf-ranlib
+
           export CC_FOR_BUILD=gcc
           export CXX_FOR_BUILD=g++
 
@@ -75,38 +65,25 @@ jobs:
             --with-arch=rv32imc \
             --with-abi=ilp32
 
-          # -E preserves CC/CXX through the sudo boundary
           sudo -E make -j"$(nproc)"
 
-      - name: Verify toolchain binary architecture
+      - name: Verify tool runs on ARM (binary is ARM)
         shell: bash
         run: |
           set -euo pipefail
           BIN=/opt/pulp-riscv/bin/riscv32-unknown-elf-gcc
-          test -x "$BIN" || { echo "ERROR: gcc not found"; exit 1; }
+          test -x "$BIN"
           file "$BIN"
-          file "$BIN" | grep -q "ARM" \
-            || { echo "ERROR: binary is not ARM — Canadian cross failed"; exit 1; }
+          file "$BIN" | grep -q "ARM" || { echo "Not ARM"; exit 1; }
 
-      - name: Create TAR Archive
+      - name: Pack
         shell: bash
         run: |
           set -euo pipefail
-          tar -czvf pulp-toolchain-armhf.tar.gz -C /opt pulp-riscv
+          tar -czf pulp-toolchain-host-armhf.tar.gz -C /opt pulp-riscv
 
-      - name: Upload Artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: riscv-pulp-toolchain-xilinx
-          path: pulp-toolchain-armhf.tar.gz
-
-      - name: Publish rolling GitHub Release
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
-          gh release create latest pulp-toolchain-armhf.tar.gz \
-            --title "Latest PULP RISC-V Toolchain" \
-            --notes "Auto-built armhf toolchain for rv32imc. Build ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: pulp-toolchain-host-armhf
+          path: pulp-toolchain-host-armhf.tar.gz
