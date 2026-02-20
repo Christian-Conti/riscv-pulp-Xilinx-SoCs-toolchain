@@ -60,29 +60,28 @@ jobs:
 
           # 1) Force default Ubuntu sources to amd64
           if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
-            # Handle new deb822 format on newer Ubuntu 22.04 runners
             sudo cp -a /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.bak
             SIGNED_BY="$(awk -F': ' 'tolower($1)=="signed-by"{print $2; exit}' /etc/apt/sources.list.d/ubuntu.sources || true)"
             if [[ -z "${SIGNED_BY}" ]]; then
               SIGNED_BY="/usr/share/keyrings/ubuntu-archive-keyring.gpg"
             fi
+            
             sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null <<EOF
-Types: deb
-URIs: http://archive.ubuntu.com/ubuntu
-Suites: jammy jammy-updates jammy-backports
-Components: main restricted universe multiverse
-Architectures: amd64
-Signed-By: ${SIGNED_BY}
+          Types: deb
+          URIs: http://archive.ubuntu.com/ubuntu
+          Suites: jammy jammy-updates jammy-backports
+          Components: main restricted universe multiverse
+          Architectures: amd64
+          Signed-By: ${SIGNED_BY}
 
-Types: deb
-URIs: http://security.ubuntu.com/ubuntu
-Suites: jammy-security
-Components: main restricted universe multiverse
-Architectures: amd64
-Signed-By: ${SIGNED_BY}
-EOF
+          Types: deb
+          URIs: http://security.ubuntu.com/ubuntu
+          Suites: jammy-security
+          Components: main restricted universe multiverse
+          Architectures: amd64
+          Signed-By: ${SIGNED_BY}
+          EOF
           else
-            # Fallback for older legacy sources.list format
             sudo cp -a /etc/apt/sources.list /etc/apt/sources.list.bak || true
             if [[ -f /etc/apt/sources.list ]]; then
               sudo sed -i -E 's/^deb(\s+)/deb [arch=amd64]\1/' /etc/apt/sources.list
@@ -95,11 +94,11 @@ EOF
           # 3) Add Ubuntu Ports for the foreign arch (jammy)
           LIST="/etc/apt/sources.list.d/ubuntu-ports-${{ matrix.foreign_arch }}.list"
           sudo tee "${LIST}" >/dev/null <<EOF
-deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
-deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
-deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
-deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse
-EOF
+          deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
+          deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
+          deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
+          deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse
+          EOF
 
           sudo apt-get update -y --allow-releaseinfo-change
 
@@ -134,7 +133,8 @@ EOF
           #endif
             return 0;
           }
-EOF
+          EOF
+          
           if [[ "${{ matrix.arch_label }}" == "armhf" ]]; then
             arm-linux-gnueabihf-gcc hello.c -o hello_host
             ./hello_host | grep -q "hello-armhf"
@@ -194,8 +194,9 @@ EOF
           cat > rvtest.c <<'EOF'
           int add(int a,int b){ return a+b; }
           int main(void){ return add(1,2); }
-EOF
-          # Ignoriamo volutamente l'errore del linker su _start che hai visto prima, è normale
+          EOF
+          
+          # Ignoriamo volutamente l'errore del linker su _start
           riscv32-unknown-elf-gcc -march=rv32imc -mabi=ilp32 -nostdlib -Wl,--no-relax -o rvtest.elf rvtest.c || true
           
           file rvtest.elf | grep -qi "ELF 32-bit" || { echo "ERROR: not 32-bit ELF"; exit 1; }
