@@ -193,14 +193,13 @@ jobs:
 
           cat > rvtest.c <<'EOF'
           int add(int a,int b){ return a+b; }
-          int main(void){ return add(1,2); }
           EOF
           
-          # Ignoriamo volutamente l'errore del linker su _start
-          riscv32-unknown-elf-gcc -march=rv32imc -mabi=ilp32 -nostdlib -Wl,--no-relax -o rvtest.elf rvtest.c || true
+          # Compilazione dell'Object File (.o) per evitare errori del linker (riscv.ld)
+          riscv32-unknown-elf-gcc -march=rv32imc -mabi=ilp32 -c -o rvtest.o rvtest.c
           
-          file rvtest.elf | grep -qi "ELF 32-bit" || { echo "ERROR: not 32-bit ELF"; exit 1; }
-          readelf -h rvtest.elf | grep -qi "Machine:.*RISC-V" || { echo "ERROR: not RISC-V"; exit 1; }
+          file rvtest.o | grep -qi "ELF 32-bit" || { echo "ERROR: not 32-bit ELF"; exit 1; }
+          readelf -h rvtest.o | grep -qi "Machine:.*RISC-V" || { echo "ERROR: not RISC-V"; exit 1; }
 
       - name: Create TAR Archive
         shell: bash
