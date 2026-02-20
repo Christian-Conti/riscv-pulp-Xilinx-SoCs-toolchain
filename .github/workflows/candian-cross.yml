@@ -1,4 +1,4 @@
-name: Build PULP RISC-V Toolchain (host armhf + aarch64, target X-HEEP rv32)
+name: Build RISC-V Toolchain (host armhf + aarch64, target X-HEEP rv32)
 
 on:
   workflow_dispatch:
@@ -119,42 +119,40 @@ jobs:
           set -euo pipefail
           sudo update-binfmts --enable "${{ matrix.qemu_binfmt }}" || true
 
-      - name: Verify QEMU binfmt works (sanity check)
+      - name: Clone RISC-V Toolchain & Switch to OpenHW Core-V
         shell: bash
         run: |
           set -euo pipefail
-          cat > hello.c <<'EOF'
-          #include <stdio.h>
-          int main(void){
-          #if defined(__aarch64__)
-            puts("hello-aarch64");
-          #elif defined(__arm__)
-            puts("hello-armhf");
-          #endif
-            return 0;
-          }
-          EOF
+          rm -rf riscv-gnu-toolchain
           
-          if [[ "${{ matrix.arch_label }}" == "armhf" ]]; then
-            arm-linux-gnueabihf-gcc hello.c -o hello_host
-            ./hello_host | grep -q "hello-armhf"
-          else
-            aarch64-linux-gnu-gcc hello.c -o hello_host
-            ./hello_host | grep -q "hello-aarch64"
-          fi
-
-      - name: Clone RISC-V PULP Toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf pulp-riscv-gnu-toolchain
-          git clone --recursive https://github.com/pulp-platform/pulp-riscv-gnu-toolchain.git
+          # 1. Cloniamo il contenitore ufficiale
+          git clone https://github.com/riscv-collab/riscv-gnu-toolchain.git
+          cd riscv-gnu-toolchain
+          
+          # 2. Inizializziamo i sottomoduli standard
+          git submodule update --init
+          
+          # 3. Sostituiamo GCC con il fork di OpenHW (branch development per le estensioni xcv)
+          echo "Switching GCC to OpenHW CORE-V..."
+          cd riscv-gcc
+          git remote add corev https://github.com/openhwgroup/corev-gcc.git
+          git fetch corev
+          git checkout corev/development
+          cd ..
+          
+          # 4. Sostituiamo Binutils con il fork di OpenHW (necessario per supportare assembler xcv*)
+          echo "Switching Binutils to OpenHW CORE-V..."
+          cd riscv-binutils
+          git remote add corev https://github.com/openhwgroup/corev-binutils-gdb.git
+          git fetch corev
+          git checkout corev/development
+          cd ..
 
       - name: Configure + Build
         shell: bash
         run: |
           set -euo pipefail
-          cd pulp-riscv-gnu-toolchain
+          cd riscv-gnu-toolchain
 
           export CC="${{ matrix.host_triplet }}-gcc"
           export CXX="${{ matrix.host_triplet }}-g++"
@@ -163,14 +161,27 @@ jobs:
           export CC_FOR_BUILD=gcc
           export CXX_FOR_BUILD=g++
 
-          PREFIX="/opt/pulp-riscv-${{ matrix.arch_label }}"
+          PREFIX="/opt/riscv-${{ matrix.arch_label }}"
 
           ./configure \
             --prefix="${PREFIX}" \
             --host="${{ matrix.host_triplet }}" \
             --build="x86_64-linux-gnu" \
-            --with-arch=rv32imc \
-            --with-abi=ilp32
+            --with-arch=rv32imac \
+            --with-abi=ilp32 \
+            --disable-shared \
+            --enable-languages=c,c++ \
+            --enable-tls \
+            --disable-werror \
+            --disable-libmudflap \
+            --disable-libssp \
+            --disable-quadmath \
+            --disable-libgomp \
+            --disable-nls \
+            --enable-multilib \
+            --with-multilib-generator='rv32e-ilp32e--c rv32ea-ilp32e--m rv32em-ilp32e--c rv32eac-ilp32e-- rv32emac-ilp32e-- rv32i-ilp32--c rv32ia-ilp32--m rv32im-ilp32--c rv32if-ilp32f-rv32ifd-c rv32iaf-ilp32f-rv32imaf,rv32iafc-d rv32imf-ilp32f-rv32imfd-c rv32iac-ilp32-- rv32imac-ilp32-- rv32imafc-ilp32f-rv32imafdc- rv32ifd-ilp32d--c rv32imfd-ilp32d--c rv32iafd-ilp32d-rv32imafd,rv32iafdc- rv32imafdc-ilp32d-- rv64i-lp64--c rv64ia-lp64--m rv64im-lp64--c rv64if-lp64f-rv64ifd-c rv64iaf-lp64f-rv64imaf,rv64iafc-d rv64imf-lp64f-rv64imfd-c rv64iac-lp64-- rv64imac-lp64-- rv64imafc-lp64f-rv64imafdc- rv64ifd-lp64d--m,c rv64iafd-lp64d-rv64imafd,rv64iafdc- rv64imafdc-lp64d-- rv32im_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imf_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32f-- rv32imfc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32f-- rv32im_zfinx_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imc_zfinx_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32--' \
+            --with-bugurl='https://github.com/x-heep' \
+            --with-pkgversion='corev-openhw-gcc-xheep-custom'
 
           sudo -E make -j"$(nproc)" HOST="${{ matrix.host_triplet }}" BUILD="x86_64-linux-gnu"
 
@@ -178,7 +189,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PREFIX="/opt/pulp-riscv-${{ matrix.arch_label }}"
+          PREFIX="/opt/riscv-${{ matrix.arch_label }}"
           BIN="${PREFIX}/bin/riscv32-unknown-elf-gcc"
           test -x "$BIN" || { echo "ERROR: gcc not found at $BIN"; exit 1; }
           file "$BIN"
@@ -188,15 +199,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PREFIX="/opt/pulp-riscv-${{ matrix.arch_label }}"
+          PREFIX="/opt/riscv-${{ matrix.arch_label }}"
           export PATH="${PREFIX}/bin:${PATH}"
 
           cat > rvtest.c <<'EOF'
           int add(int a,int b){ return a+b; }
           EOF
           
-          # Compilazione dell'Object File (.o) per evitare errori del linker (riscv.ld)
-          riscv32-unknown-elf-gcc -march=rv32imc -mabi=ilp32 -c -o rvtest.o rvtest.c
+          # Compilazione dell'Object File (.o)
+          riscv32-unknown-elf-gcc -march=rv32imac -mabi=ilp32 -c -o rvtest.o rvtest.c
           
           file rvtest.o | grep -qi "ELF 32-bit" || { echo "ERROR: not 32-bit ELF"; exit 1; }
           readelf -h rvtest.o | grep -qi "Machine:.*RISC-V" || { echo "ERROR: not RISC-V"; exit 1; }
@@ -205,14 +216,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          OUT="pulp-toolchain-host-${{ matrix.arch_label }}-xheep-rv32imc.tar.gz"
-          sudo tar -czvf "$OUT" -C /opt "pulp-riscv-${{ matrix.arch_label }}"
+          OUT="riscv-toolchain-host-${{ matrix.arch_label }}-xheep-rv32imac.tar.gz"
+          sudo tar -czvf "$OUT" -C /opt "riscv-${{ matrix.arch_label }}"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pulp-toolchain-host-${{ matrix.arch_label }}-xheep-rv32imc
-          path: pulp-toolchain-host-${{ matrix.arch_label }}-xheep-rv32imc.tar.gz
+          name: riscv-toolchain-host-${{ matrix.arch_label }}-xheep-rv32imac
+          path: riscv-toolchain-host-${{ matrix.arch_label }}-xheep-rv32imac.tar.gz
 
   publish-rolling-release:
     needs: build-toolchain
@@ -239,9 +250,9 @@ jobs:
           set -euo pipefail
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
           gh release create latest \
-            pulp-toolchain-host-armhf-xheep-rv32imc.tar.gz \
-            pulp-toolchain-host-aarch64-xheep-rv32imc.tar.gz \
-            --title "Latest PULP RISC-V Toolchain (ARM hosts, X-HEEP rv32)" \
-            --notes "Toolchains: host=armhf + aarch64, target=X-HEEP RISC-V 32-bit (rv32imc/ilp32). Run ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
+            riscv-toolchain-host-armhf-xheep-rv32imac.tar.gz \
+            riscv-toolchain-host-aarch64-xheep-rv32imac.tar.gz \
+            --title "Latest RISC-V Toolchain (ARM hosts, X-HEEP rv32)" \
+            --notes "Toolchains: host=armhf + aarch64, target=X-HEEP RISC-V 32-bit (rv32imac/ilp32). Run ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
