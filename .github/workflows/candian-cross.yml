@@ -134,7 +134,7 @@ jobs:
           
           # 3. Sostituiamo GCC con il fork di OpenHW (branch development per le estensioni xcv)
           echo "Switching GCC to OpenHW CORE-V..."
-          cd riscv-gcc
+          cd gcc
           git remote add corev https://github.com/openhwgroup/corev-gcc.git
           git fetch corev
           git checkout corev/development
@@ -142,7 +142,7 @@ jobs:
           
           # 4. Sostituiamo Binutils con il fork di OpenHW (necessario per supportare assembler xcv*)
           echo "Switching Binutils to OpenHW CORE-V..."
-          cd riscv-binutils
+          cd binutils
           git remote add corev https://github.com/openhwgroup/corev-binutils-gdb.git
           git fetch corev
           git checkout corev/development
@@ -167,8 +167,9 @@ jobs:
             --prefix="${PREFIX}" \
             --host="${{ matrix.host_triplet }}" \
             --build="x86_64-linux-gnu" \
-            --with-arch=rv32imac \
-            --with-abi=ilp32 \
+            --with-sysroot="${PREFIX}/riscv32-corev-elf" \
+            --with-native-system-header-dir=/include \
+            --with-newlib \
             --disable-shared \
             --enable-languages=c,c++ \
             --enable-tls \
@@ -180,8 +181,10 @@ jobs:
             --disable-nls \
             --enable-multilib \
             --with-multilib-generator='rv32e-ilp32e--c rv32ea-ilp32e--m rv32em-ilp32e--c rv32eac-ilp32e-- rv32emac-ilp32e-- rv32i-ilp32--c rv32ia-ilp32--m rv32im-ilp32--c rv32if-ilp32f-rv32ifd-c rv32iaf-ilp32f-rv32imaf,rv32iafc-d rv32imf-ilp32f-rv32imfd-c rv32iac-ilp32-- rv32imac-ilp32-- rv32imafc-ilp32f-rv32imafdc- rv32ifd-ilp32d--c rv32imfd-ilp32d--c rv32iafd-ilp32d-rv32imafd,rv32iafdc- rv32imafdc-ilp32d-- rv64i-lp64--c rv64ia-lp64--m rv64im-lp64--c rv64if-lp64f-rv64ifd-c rv64iaf-lp64f-rv64imaf,rv64iafc-d rv64imf-lp64f-rv64imfd-c rv64iac-lp64-- rv64imac-lp64-- rv64imafc-lp64f-rv64imafdc- rv64ifd-lp64d--m,c rv64iafd-lp64d-rv64imafd,rv64iafdc- rv64imafdc-lp64d-- rv32im_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imf_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32f-- rv32imfc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32f-- rv32im_zfinx_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imc_zfinx_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32--' \
+            --with-arch=rv32imac \
+            --with-abi=ilp32 \
             --with-bugurl='https://github.com/x-heep' \
-            --with-pkgversion='corev-openhw-gcc-xheep-custom'
+            --with-pkgversion='corev-openhw-gcc-xheep-20240530'
 
           sudo -E make -j"$(nproc)" HOST="${{ matrix.host_triplet }}" BUILD="x86_64-linux-gnu"
 
@@ -190,7 +193,11 @@ jobs:
         run: |
           set -euo pipefail
           PREFIX="/opt/riscv-${{ matrix.arch_label }}"
-          BIN="${PREFIX}/bin/riscv32-unknown-elf-gcc"
+          BIN="${PREFIX}/bin/riscv32-corev-elf-gcc"
+          # Fallback check se il target name non è corev-elf ma unknown-elf
+          if [[ ! -x "$BIN" ]]; then
+            BIN="${PREFIX}/bin/riscv32-unknown-elf-gcc"
+          fi
           test -x "$BIN" || { echo "ERROR: gcc not found at $BIN"; exit 1; }
           file "$BIN"
           file "$BIN" | grep -Eqi "${{ matrix.file_grep }}" || { echo "ERROR: host arch mismatch"; exit 1; }
@@ -206,8 +213,11 @@ jobs:
           int add(int a,int b){ return a+b; }
           EOF
           
+          # Cerca il compilatore giusto (corev o unknown)
+          COMPILER=$(find "${PREFIX}/bin" -name "*-gcc" | head -n 1)
+          
           # Compilazione dell'Object File (.o)
-          riscv32-unknown-elf-gcc -march=rv32imac -mabi=ilp32 -c -o rvtest.o rvtest.c
+          "$COMPILER" -march=rv32imac -mabi=ilp32 -c -o rvtest.o rvtest.c
           
           file rvtest.o | grep -qi "ELF 32-bit" || { echo "ERROR: not 32-bit ELF"; exit 1; }
           readelf -h rvtest.o | grep -qi "Machine:.*RISC-V" || { echo "ERROR: not RISC-V"; exit 1; }
