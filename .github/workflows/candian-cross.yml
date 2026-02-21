@@ -120,7 +120,7 @@ jobs:
           Components: main restricted universe multiverse
           Architectures: amd64
           Signed-By: ${SIGNED_BY}
-          
+
           Types: deb
           URIs: http://security.ubuntu.com/ubuntu
           Suites: jammy-security
@@ -164,29 +164,43 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+
           rm -rf riscv-gnu-toolchain
-          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+          export GIT_TERMINAL_PROMPT=0
+
+          # Remove any leftover auth headers/rewrites that could poison fetches
           git config --global --unset-all http.https://github.com/.extraheader || true
+          git config --global --unset-all url."https://x-access-token:${GH_TOKEN:-}@github.com/".insteadOf || true
+          git config --global --unset-all url."https://x-access-token:@github.com/".insteadOf || true
+
           git config --global fetch.parallel 8
+
           git clone --depth 1 https://github.com/riscv-collab/riscv-gnu-toolchain.git
           cd riscv-gnu-toolchain
-          sed -i 's|https://sourceware.org/git/binutils-gdb.git|https://github.com/bminor/binutils-gdb.git|g' .gitmodules
-          sed -i 's|https://sourceware.org/git/newlib-cygwin.git|https://github.com/bminor/newlib.git|g' .gitmodules
-          git submodule sync
+
+          # Force submodules to Sourceware upstreams
+          git config -f .gitmodules submodule.binutils.url https://sourceware.org/git/binutils-gdb.git
+          git config -f .gitmodules submodule.newlib.url   https://sourceware.org/git/newlib-cygwin.git
+
+          git submodule sync --recursive
+
           for attempt in 1 2 3 4 5; do
             if git submodule update --init --depth 1 --jobs 8 gcc binutils newlib; then
               break
             fi
-            sleep 15
+            sleep 10
             if [[ "${attempt}" -eq 5 ]]; then
+              echo "Submodule update failed after ${attempt} attempts"
               exit 1
             fi
           done
+
           cd gcc
           git remote add corev https://github.com/openhwgroup/corev-gcc.git || true
           git fetch --depth 1 corev development
           git checkout -B corev-development FETCH_HEAD
           cd ..
+
           cd binutils
           git remote add corev https://github.com/openhwgroup/corev-binutils-gdb.git || true
           git fetch --depth 1 corev development
@@ -206,13 +220,16 @@ jobs:
         run: |
           set -euo pipefail
           cd riscv-gnu-toolchain
+
           export CC="ccache ${{ matrix.host.host_triplet }}-gcc"
           export CXX="ccache ${{ matrix.host.host_triplet }}-g++"
           export AR="${{ matrix.host.host_triplet }}-ar"
           export RANLIB="${{ matrix.host.host_triplet }}-ranlib"
           export CC_FOR_BUILD="ccache gcc"
           export CXX_FOR_BUILD="ccache g++"
+
           PREFIX="/opt/riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}"
+
           ./configure \
             --prefix="${PREFIX}" \
             --host="${{ matrix.host.host_triplet }}" \
@@ -236,6 +253,7 @@ jobs:
             --with-abi=${{ matrix.flavor.abi }} \
             --with-bugurl="https://github.com/Christian-Conti/riscv-Xilinx-SoCs-toolchain" \
             --with-pkgversion="corev-openhw-gcc-rolling-${{ matrix.flavor.name }}"
+
           make -j"$(nproc)" newlib \
             HOST="${{ matrix.host.host_triplet }}" \
             BUILD="x86_64-linux-gnu" \
@@ -263,7 +281,7 @@ jobs:
           cat > rvtest.c <<'EOF'
           int add(int a,int b){ return a+b; }
           EOF
-          COMPILER=$(find "${PREFIX}/bin" -maxdepth 1 -type f -name "*-gcc" | head -n 1)
+          COMPILER="$(find "${PREFIX}/bin" -maxdepth 1 -type f -name "*-gcc" | head -n 1)"
           test -n "${COMPILER}"
           "${COMPILER}" -march=${{ matrix.flavor.arch }} -mabi=${{ matrix.flavor.abi }} -c -o rvtest.o rvtest.c
           file rvtest.o | grep -qiE "ELF (32|64)-bit"
