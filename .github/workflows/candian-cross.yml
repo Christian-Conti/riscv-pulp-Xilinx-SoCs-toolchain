@@ -34,26 +34,60 @@ jobs:
             file_grep: "aarch64|ARM aarch64"
 
         flavor:
-          - name: rv32-standard
+          # --- RV32 STANDARD SPLIT ---
+          - name: rv32e
+            arch: rv32emac
+            abi: ilp32e
+            multilibs: "rv32e-ilp32e--c rv32ea-ilp32e--m rv32em-ilp32e--c rv32eac-ilp32e-- rv32emac-ilp32e--"
+            
+          - name: rv32i-imac
             arch: rv32imac
             abi: ilp32
-            multilibs: "rv32e-ilp32e--c rv32ea-ilp32e--m rv32em-ilp32e--c rv32eac-ilp32e-- rv32emac-ilp32e-- rv32i-ilp32--c rv32ia-ilp32--m rv32im-ilp32--c rv32if-ilp32f-rv32ifd-c rv32iaf-ilp32f-rv32imaf,rv32iafc-d rv32imf-ilp32f-rv32imfd-c rv32iac-ilp32-- rv32imac-ilp32-- rv32imafc-ilp32f-rv32imafdc- rv32ifd-ilp32d--c rv32imfd-ilp32d--c rv32iafd-ilp32d-rv32imafd,rv32iafdc- rv32imafdc-ilp32d--"
-          
-          - name: rv64-standard
+            multilibs: "rv32i-ilp32--c rv32ia-ilp32--m rv32im-ilp32--c rv32iac-ilp32-- rv32imac-ilp32--"
+            
+          - name: rv32-float
+            arch: rv32imafdc
+            abi: ilp32d
+            multilibs: "rv32if-ilp32f-rv32ifd-c rv32iaf-ilp32f-rv32imaf,rv32iafc-d rv32imf-ilp32f-rv32imfd-c rv32imafc-ilp32f-rv32imafdc- rv32ifd-ilp32d--c rv32imfd-ilp32d--c rv32iafd-ilp32d-rv32imafd,rv32iafdc- rv32imafdc-ilp32d--"
+
+          # --- RV64 STANDARD SPLIT ---
+          - name: rv64i-imac
             arch: rv64imac
             abi: lp64
-            multilibs: "rv64i-lp64--c rv64ia-lp64--m rv64im-lp64--c rv64if-lp64f-rv64ifd-c rv64iaf-lp64f-rv64imaf,rv64iafc-d rv64imf-lp64f-rv64imfd-c rv64iac-lp64-- rv64imac-lp64-- rv64imafc-lp64f-rv64imafdc- rv64ifd-lp64d--m,c rv64iafd-lp64d-rv64imafd,rv64iafdc- rv64imafdc-lp64d--"
-          
-          - name: xheep-custom
-            arch: rv32imac
+            multilibs: "rv64i-lp64--c rv64ia-lp64--m rv64im-lp64--c rv64iac-lp64-- rv64imac-lp64--"
+            
+          - name: rv64-float
+            arch: rv64imafdc
+            abi: lp64d
+            multilibs: "rv64if-lp64f-rv64ifd-c rv64iaf-lp64f-rv64imaf,rv64iafc-d rv64imf-lp64f-rv64imfd-c rv64imafc-lp64f-rv64imafdc- rv64ifd-lp64d--m,c rv64iafd-lp64d-rv64imafd,rv64iafdc- rv64imafdc-lp64d--"
+
+          # --- X-HEEP CUSTOM SPLIT ---
+          - name: xheep-base
+            arch: rv32imc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip
             abi: ilp32
-            multilibs: "rv32im_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imf_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32f-- rv32imfc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32f-- rv32im_zfinx_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imc_zfinx_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32--"
+            multilibs: "rv32im_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32--"
+
+          - name: xheep-float
+            arch: rv32imfc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip
+            abi: ilp32f
+            multilibs: "rv32imf_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32f-- rv32imfc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32f--"
+
+          - name: xheep-zfinx
+            arch: rv32imc_zfinx_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip
+            abi: ilp32
+            multilibs: "rv32im_zfinx_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imc_zfinx_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32--"
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}
+          max-size: 2G
 
       - name: Install base dependencies
         shell: bash
@@ -156,18 +190,27 @@ jobs:
           git checkout corev/development
           cd ..
 
+      - name: Prepare /opt Directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREFIX="/opt/riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}"
+          sudo mkdir -p "${PREFIX}"
+          sudo chown -R $USER:$USER /opt
+
       - name: Configure + Build
         shell: bash
         run: |
           set -euo pipefail
           cd riscv-gnu-toolchain
 
-          export CC="${{ matrix.host.host_triplet }}-gcc"
-          export CXX="${{ matrix.host.host_triplet }}-g++"
+          # Usa ccache per i compilatori host
+          export CC="ccache ${{ matrix.host.host_triplet }}-gcc"
+          export CXX="ccache ${{ matrix.host.host_triplet }}-g++"
           export AR="${{ matrix.host.host_triplet }}-ar"
           export RANLIB="${{ matrix.host.host_triplet }}-ranlib"
-          export CC_FOR_BUILD=gcc
-          export CXX_FOR_BUILD=g++
+          export CC_FOR_BUILD="ccache gcc"
+          export CXX_FOR_BUILD="ccache g++"
 
           PREFIX="/opt/riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}"
 
@@ -195,7 +238,13 @@ jobs:
             --with-bugurl='https://github.com/x-heep' \
             --with-pkgversion='corev-openhw-gcc-xheep-20240530-${{ matrix.flavor.name }}'
 
-          sudo -E make -j"$(nproc)" HOST="${{ matrix.host.host_triplet }}" BUILD="x86_64-linux-gnu"
+          # Make eseguito senza sudo (cartella /opt già di proprietà dell'utente)
+          # Aggiunto -g0 per rimuovere i simboli di debug dalle librerie e velocizzare
+          make -j"$(nproc)" \
+            HOST="${{ matrix.host.host_triplet }}" \
+            BUILD="x86_64-linux-gnu" \
+            CFLAGS_FOR_TARGET="-Os -g0" \
+            CXXFLAGS_FOR_TARGET="-Os -g0"
 
       - name: Verify toolchain host binary architecture
         shell: bash
@@ -239,7 +288,7 @@ jobs:
         run: |
           set -euo pipefail
           OUT="riscv-toolchain-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}.tar.gz"
-          sudo tar -czvf "$OUT" -C /opt "riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}"
+          tar -czvf "$OUT" -C /opt "riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
