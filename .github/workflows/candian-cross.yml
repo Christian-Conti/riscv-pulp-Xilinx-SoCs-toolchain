@@ -174,18 +174,34 @@ jobs:
         run: |
           set -euo pipefail
 
-          sudo update-binfmts --enable "${{ matrix.host.qemu_binfmt }}" || true
+          # Ensure binfmt_misc is available and mounted
+          sudo modprobe binfmt_misc || true
+          if ! mount | grep -q "binfmt_misc on /proc/sys/fs/binfmt_misc"; then
+            sudo mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc || true
+          fi
+
+          # Re-register handlers (systemd-binfmt exists on GitHub runners)
           sudo systemctl restart systemd-binfmt || true
 
+          # Enable specific qemu handler
+          sudo update-binfmts --enable "${{ matrix.host.qemu_binfmt }}" || true
+
+          # Show status (useful in logs)
+          sudo update-binfmts --display "${{ matrix.host.qemu_binfmt }}" || true
+          ls -la /proc/sys/fs/binfmt_misc || true
+
+          # Static smoke test to avoid missing ARM dynamic loader
           cat > /tmp/hello.c <<'EOF'
           int main(){return 0;}
           EOF
 
           if [[ "${{ matrix.host.foreign_arch }}" == "armhf" ]]; then
-            arm-linux-gnueabihf-gcc /tmp/hello.c -o /tmp/hello_armhf
+            arm-linux-gnueabihf-gcc -static /tmp/hello.c -o /tmp/hello_armhf
+            file /tmp/hello_armhf
             /tmp/hello_armhf
           else
-            aarch64-linux-gnu-gcc /tmp/hello.c -o /tmp/hello_aarch64
+            aarch64-linux-gnu-gcc -static /tmp/hello.c -o /tmp/hello_aarch64
+            file /tmp/hello_aarch64
             /tmp/hello_aarch64
           fi
 
