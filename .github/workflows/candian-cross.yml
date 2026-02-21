@@ -1,4 +1,4 @@
-name: Build RISC-V Toolchain (host armhf + aarch64, target X-HEEP rv32)
+name: Build RISC-V Toolchain (Split Matrix for Timeout)
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
+        host:
           - host_triplet: arm-linux-gnueabihf
             arch_label: armhf
             foreign_arch: armhf
@@ -33,13 +33,29 @@ jobs:
             qemu_binfmt: qemu-aarch64
             file_grep: "aarch64|ARM aarch64"
 
+        flavor:
+          - name: rv32-standard
+            arch: rv32imac
+            abi: ilp32
+            multilibs: "rv32e-ilp32e--c rv32ea-ilp32e--m rv32em-ilp32e--c rv32eac-ilp32e-- rv32emac-ilp32e-- rv32i-ilp32--c rv32ia-ilp32--m rv32im-ilp32--c rv32if-ilp32f-rv32ifd-c rv32iaf-ilp32f-rv32imaf,rv32iafc-d rv32imf-ilp32f-rv32imfd-c rv32iac-ilp32-- rv32imac-ilp32-- rv32imafc-ilp32f-rv32imafdc- rv32ifd-ilp32d--c rv32imfd-ilp32d--c rv32iafd-ilp32d-rv32imafd,rv32iafdc- rv32imafdc-ilp32d--"
+          
+          - name: rv64-standard
+            arch: rv64imac
+            abi: lp64
+            multilibs: "rv64i-lp64--c rv64ia-lp64--m rv64im-lp64--c rv64if-lp64f-rv64ifd-c rv64iaf-lp64f-rv64imaf,rv64iafc-d rv64imf-lp64f-rv64imfd-c rv64iac-lp64-- rv64imac-lp64-- rv64imafc-lp64f-rv64imafdc- rv64ifd-lp64d--m,c rv64iafd-lp64d-rv64imafd,rv64iafdc- rv64imafdc-lp64d--"
+          
+          - name: xheep-custom
+            arch: rv32imac
+            abi: ilp32
+            multilibs: "rv32im_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imf_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32f-- rv32imfc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32f-- rv32im_zfinx_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imc_zfinx_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32--"
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Install base dependencies (build tools + qemu + cross compiler)
+      - name: Install base dependencies
         shell: bash
         run: |
           set -euo pipefail
@@ -50,7 +66,7 @@ jobs:
             zlib1g-dev libexpat-dev \
             git ca-certificates \
             qemu-user-static binfmt-support \
-            "${{ matrix.gcc_pkg }}" "${{ matrix.gxx_pkg }}" "${{ matrix.binutils_pkg }}" \
+            "${{ matrix.host.gcc_pkg }}" "${{ matrix.host.gxx_pkg }}" "${{ matrix.host.binutils_pkg }}" \
             libgmp-dev libmpfr-dev libmpc-dev
 
       - name: Configure APT sources for multiarch
@@ -58,7 +74,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # 1) Force default Ubuntu sources to amd64
           if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
             sudo cp -a /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.bak
             SIGNED_BY="$(awk -F': ' 'tolower($1)=="signed-by"{print $2; exit}' /etc/apt/sources.list.d/ubuntu.sources || true)"
@@ -88,36 +103,34 @@ jobs:
             fi
           fi
 
-          # 2) Enable foreign architecture
-          sudo dpkg --add-architecture "${{ matrix.foreign_arch }}"
+          sudo dpkg --add-architecture "${{ matrix.host.foreign_arch }}"
 
-          # 3) Add Ubuntu Ports for the foreign arch (jammy)
-          LIST="/etc/apt/sources.list.d/ubuntu-ports-${{ matrix.foreign_arch }}.list"
+          LIST="/etc/apt/sources.list.d/ubuntu-ports-${{ matrix.host.foreign_arch }}.list"
           sudo tee "${LIST}" >/dev/null <<EOF
-          deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
-          deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
-          deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
-          deb [arch=${{ matrix.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse
+          deb [arch=${{ matrix.host.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
+          deb [arch=${{ matrix.host.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
+          deb [arch=${{ matrix.host.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
+          deb [arch=${{ matrix.host.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse
           EOF
 
           sudo apt-get update -y --allow-releaseinfo-change
 
-      - name: Install host (foreign-arch) dev libs needed by GCC/binutils
+      - name: Install host (foreign-arch) dev libs
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get install -y \
-            "libgmp-dev:${{ matrix.foreign_arch }}" \
-            "libmpfr-dev:${{ matrix.foreign_arch }}" \
-            "libmpc-dev:${{ matrix.foreign_arch }}" \
-            "zlib1g-dev:${{ matrix.foreign_arch }}" \
-            "libexpat1-dev:${{ matrix.foreign_arch }}"
+            "libgmp-dev:${{ matrix.host.foreign_arch }}" \
+            "libmpfr-dev:${{ matrix.host.foreign_arch }}" \
+            "libmpc-dev:${{ matrix.host.foreign_arch }}" \
+            "zlib1g-dev:${{ matrix.host.foreign_arch }}" \
+            "libexpat1-dev:${{ matrix.host.foreign_arch }}"
 
-      - name: Enable binfmt for ${{ matrix.qemu_binfmt }}
+      - name: Enable binfmt for QEMU
         shell: bash
         run: |
           set -euo pipefail
-          sudo update-binfmts --enable "${{ matrix.qemu_binfmt }}" || true
+          sudo update-binfmts --enable "${{ matrix.host.qemu_binfmt }}" || true
 
       - name: Clone RISC-V Toolchain & Switch to OpenHW Core-V
         shell: bash
@@ -125,14 +138,10 @@ jobs:
           set -euo pipefail
           rm -rf riscv-gnu-toolchain
           
-          # 1. Cloniamo il contenitore ufficiale
           git clone https://github.com/riscv-collab/riscv-gnu-toolchain.git
           cd riscv-gnu-toolchain
-          
-          # 2. Inizializziamo i sottomoduli standard
           git submodule update --init
           
-          # 3. Sostituiamo GCC con il fork di OpenHW (branch development per le estensioni xcv)
           echo "Switching GCC to OpenHW CORE-V..."
           cd gcc
           git remote add corev https://github.com/openhwgroup/corev-gcc.git
@@ -140,7 +149,6 @@ jobs:
           git checkout corev/development
           cd ..
           
-          # 4. Sostituiamo Binutils con il fork di OpenHW (necessario per supportare assembler xcv*)
           echo "Switching Binutils to OpenHW CORE-V..."
           cd binutils
           git remote add corev https://github.com/openhwgroup/corev-binutils-gdb.git
@@ -154,20 +162,20 @@ jobs:
           set -euo pipefail
           cd riscv-gnu-toolchain
 
-          export CC="${{ matrix.host_triplet }}-gcc"
-          export CXX="${{ matrix.host_triplet }}-g++"
-          export AR="${{ matrix.host_triplet }}-ar"
-          export RANLIB="${{ matrix.host_triplet }}-ranlib"
+          export CC="${{ matrix.host.host_triplet }}-gcc"
+          export CXX="${{ matrix.host.host_triplet }}-g++"
+          export AR="${{ matrix.host.host_triplet }}-ar"
+          export RANLIB="${{ matrix.host.host_triplet }}-ranlib"
           export CC_FOR_BUILD=gcc
           export CXX_FOR_BUILD=g++
 
-          PREFIX="/opt/riscv-${{ matrix.arch_label }}"
+          PREFIX="/opt/riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}"
 
           ./configure \
             --prefix="${PREFIX}" \
-            --host="${{ matrix.host_triplet }}" \
+            --host="${{ matrix.host.host_triplet }}" \
             --build="x86_64-linux-gnu" \
-            --with-sysroot="${PREFIX}/riscv32-corev-elf" \
+            --with-sysroot="${PREFIX}/riscv-corev-elf" \
             --with-native-system-header-dir=/include \
             --with-newlib \
             --disable-shared \
@@ -180,60 +188,63 @@ jobs:
             --disable-libgomp \
             --disable-nls \
             --enable-multilib \
-            --with-multilib-generator='rv32e-ilp32e--c rv32ea-ilp32e--m rv32em-ilp32e--c rv32eac-ilp32e-- rv32emac-ilp32e-- rv32i-ilp32--c rv32ia-ilp32--m rv32im-ilp32--c rv32if-ilp32f-rv32ifd-c rv32iaf-ilp32f-rv32imaf,rv32iafc-d rv32imf-ilp32f-rv32imfd-c rv32iac-ilp32-- rv32imac-ilp32-- rv32imafc-ilp32f-rv32imafdc- rv32ifd-ilp32d--c rv32imfd-ilp32d--c rv32iafd-ilp32d-rv32imafd,rv32iafdc- rv32imafdc-ilp32d-- rv64i-lp64--c rv64ia-lp64--m rv64im-lp64--c rv64if-lp64f-rv64ifd-c rv64iaf-lp64f-rv64imaf,rv64iafc-d rv64imf-lp64f-rv64imfd-c rv64iac-lp64-- rv64imac-lp64-- rv64imafc-lp64f-rv64imafdc- rv64ifd-lp64d--m,c rv64iafd-lp64d-rv64imafd,rv64iafdc- rv64imafdc-lp64d-- rv32im_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imf_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32f-- rv32imfc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32f-- rv32im_zfinx_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imc_zfinx_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32--' \
-            --with-arch=rv32imac \
-            --with-abi=ilp32 \
+            --with-multilib-generator="${{ matrix.flavor.multilibs }}" \
+            --with-arch=${{ matrix.flavor.arch }} \
+            --with-abi=${{ matrix.flavor.abi }} \
             --with-bugurl='https://github.com/x-heep' \
-            --with-pkgversion='corev-openhw-gcc-xheep-20240530'
+            --with-pkgversion='corev-openhw-gcc-xheep-20240530-${{ matrix.flavor.name }}'
 
-          sudo -E make -j"$(nproc)" HOST="${{ matrix.host_triplet }}" BUILD="x86_64-linux-gnu"
+          sudo -E make -j"$(nproc)" HOST="${{ matrix.host.host_triplet }}" BUILD="x86_64-linux-gnu"
 
       - name: Verify toolchain host binary architecture
         shell: bash
         run: |
           set -euo pipefail
-          PREFIX="/opt/riscv-${{ matrix.arch_label }}"
+          PREFIX="/opt/riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}"
           BIN="${PREFIX}/bin/riscv32-corev-elf-gcc"
-          # Fallback check se il target name non è corev-elf ma unknown-elf
+          if [[ ! -x "$BIN" ]]; then
+            BIN="${PREFIX}/bin/riscv64-corev-elf-gcc"
+          fi
           if [[ ! -x "$BIN" ]]; then
             BIN="${PREFIX}/bin/riscv32-unknown-elf-gcc"
           fi
+          if [[ ! -x "$BIN" ]]; then
+            BIN="${PREFIX}/bin/riscv64-unknown-elf-gcc"
+          fi
           test -x "$BIN" || { echo "ERROR: gcc not found at $BIN"; exit 1; }
           file "$BIN"
-          file "$BIN" | grep -Eqi "${{ matrix.file_grep }}" || { echo "ERROR: host arch mismatch"; exit 1; }
+          file "$BIN" | grep -Eqi "${{ matrix.host.file_grep }}" || { echo "ERROR: host arch mismatch"; exit 1; }
 
-      - name: Verify toolchain produces RISC-V 32-bit ELF
+      - name: Verify toolchain produces RISC-V ELF
         shell: bash
         run: |
           set -euo pipefail
-          PREFIX="/opt/riscv-${{ matrix.arch_label }}"
+          PREFIX="/opt/riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}"
           export PATH="${PREFIX}/bin:${PATH}"
 
           cat > rvtest.c <<'EOF'
           int add(int a,int b){ return a+b; }
           EOF
           
-          # Cerca il compilatore giusto (corev o unknown)
           COMPILER=$(find "${PREFIX}/bin" -name "*-gcc" | head -n 1)
           
-          # Compilazione dell'Object File (.o)
-          "$COMPILER" -march=rv32imac -mabi=ilp32 -c -o rvtest.o rvtest.c
+          "$COMPILER" -march=${{ matrix.flavor.arch }} -mabi=${{ matrix.flavor.abi }} -c -o rvtest.o rvtest.c
           
-          file rvtest.o | grep -qi "ELF 32-bit" || { echo "ERROR: not 32-bit ELF"; exit 1; }
+          file rvtest.o | grep -qiE "ELF (32|64)-bit" || { echo "ERROR: not a valid ELF"; exit 1; }
           readelf -h rvtest.o | grep -qi "Machine:.*RISC-V" || { echo "ERROR: not RISC-V"; exit 1; }
 
       - name: Create TAR Archive
         shell: bash
         run: |
           set -euo pipefail
-          OUT="riscv-toolchain-host-${{ matrix.arch_label }}-xheep-rv32imac.tar.gz"
-          sudo tar -czvf "$OUT" -C /opt "riscv-${{ matrix.arch_label }}"
+          OUT="riscv-toolchain-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}.tar.gz"
+          sudo tar -czvf "$OUT" -C /opt "riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: riscv-toolchain-host-${{ matrix.arch_label }}-xheep-rv32imac
-          path: riscv-toolchain-host-${{ matrix.arch_label }}-xheep-rv32imac.tar.gz
+          name: riscv-toolchain-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}
+          path: riscv-toolchain-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}.tar.gz
 
   publish-rolling-release:
     needs: build-toolchain
@@ -242,7 +253,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Download artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
@@ -259,10 +270,10 @@ jobs:
         run: |
           set -euo pipefail
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          
           gh release create latest \
-            riscv-toolchain-host-armhf-xheep-rv32imac.tar.gz \
-            riscv-toolchain-host-aarch64-xheep-rv32imac.tar.gz \
-            --title "Latest RISC-V Toolchain (ARM hosts, X-HEEP rv32)" \
-            --notes "Toolchains: host=armhf + aarch64, target=X-HEEP RISC-V 32-bit (rv32imac/ilp32). Run ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
+            *.tar.gz \
+            --title "Latest RISC-V Toolchain (Split Matrix)" \
+            --notes "Toolchains compilati separatamente per evitare il timeout di 6 ore. Run ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
