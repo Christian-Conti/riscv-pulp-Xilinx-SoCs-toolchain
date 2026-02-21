@@ -172,9 +172,28 @@ jobs:
           set -euo pipefail
           rm -rf riscv-gnu-toolchain
           
+          # 1. Aumenta il buffer HTTP di Git per evitare crash sui repo enormi
+          git config --global http.postBuffer 1048576000
+          git config --global http.version HTTP/1.1
+          
           git clone https://github.com/riscv-collab/riscv-gnu-toolchain.git
           cd riscv-gnu-toolchain
-          git submodule update --init
+          
+          # 2. Ciclo di Retry per i sottomoduli (gestisce i 502 di sourceware.org)
+          echo "Aggiornamento sottomoduli (con retry automatico)..."
+          n=0
+          until [ "$n" -ge 5 ]; do
+            git submodule update --init && break
+            n=$((n+1))
+            echo "Aggiornamento sottomoduli fallito (probabile errore 502). Ritento tra 15 secondi... ($n/5)"
+            sleep 15
+          done
+          
+          # Se fallisce 5 volte, ferma tutto
+          if [ "$n" -ge 5 ]; do
+            echo "ERRORE CRITICO: Impossibile scaricare i sottomoduli dopo 5 tentativi."
+            exit 1
+          fi
           
           echo "Switching GCC to OpenHW CORE-V..."
           cd gcc
