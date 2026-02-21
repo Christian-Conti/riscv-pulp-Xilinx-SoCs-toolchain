@@ -215,7 +215,7 @@ jobs:
           sudo mkdir -p "${PREFIX}"
           sudo chown -R "$USER:$USER" /opt
 
-      - name: Configure + Build (newlib only)
+      - name: Configure + Build
         shell: bash
         run: |
           set -euo pipefail
