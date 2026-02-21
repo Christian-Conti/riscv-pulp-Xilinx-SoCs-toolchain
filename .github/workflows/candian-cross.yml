@@ -166,32 +166,37 @@ jobs:
           set -euo pipefail
           sudo update-binfmts --enable "${{ matrix.host.qemu_binfmt }}" || true
 
-      - name: Clone RISC-V Toolchain & Switch to OpenHW Core-V
+      - name: Clone Toolchain & Replace Sourceware with GitHub Mirrors
         shell: bash
         run: |
           set -euo pipefail
           rm -rf riscv-gnu-toolchain
           
-          # 1. Aumenta il buffer HTTP di Git per evitare crash sui repo enormi
           git config --global http.postBuffer 1048576000
           git config --global http.version HTTP/1.1
           
           git clone https://github.com/riscv-collab/riscv-gnu-toolchain.git
           cd riscv-gnu-toolchain
           
-          # 2. Ciclo di Retry per i sottomoduli (gestisce i 502 di sourceware.org)
-          echo "Aggiornamento sottomoduli (con retry automatico)..."
+          # bminor is the official GitHub mirror account for GNU toolchain projects
+          echo "Rewriting .gitmodules to use GitHub mirrors instead of sourceware.org..."
+          sed -i 's|https://sourceware.org/git/binutils-gdb.git|https://github.com/bminor/binutils-gdb.git|g' .gitmodules
+          sed -i 's|https://sourceware.org/git/glibc.git|https://github.com/bminor/glibc.git|g' .gitmodules
+          sed -i 's|https://sourceware.org/git/newlib-cygwin.git|https://github.com/bminor/newlib.git|g' .gitmodules
+          
+          git submodule sync
+          
+          echo "Fetching submodules..."
           n=0
           until [ "$n" -ge 5 ]; do
             git submodule update --init && break
             n=$((n+1))
-            echo "Aggiornamento sottomoduli fallito (probabile errore 502). Ritento tra 15 secondi... ($n/5)"
+            echo "Submodule update failed. Retrying in 15 seconds... ($n/5)"
             sleep 15
           done
           
-          # Se fallisce 5 volte, ferma tutto
           if [ "$n" -ge 5 ]; do
-            echo "ERRORE CRITICO: Impossibile scaricare i sottomoduli dopo 5 tentativi."
+            echo "CRITICAL ERROR: Failed to download submodules after 5 attempts."
             exit 1
           fi
           
@@ -223,7 +228,6 @@ jobs:
           set -euo pipefail
           cd riscv-gnu-toolchain
 
-          # Usa ccache per i compilatori host
           export CC="ccache ${{ matrix.host.host_triplet }}-gcc"
           export CXX="ccache ${{ matrix.host.host_triplet }}-g++"
           export AR="${{ matrix.host.host_triplet }}-ar"
@@ -257,8 +261,6 @@ jobs:
             --with-bugurl='https://github.com/x-heep' \
             --with-pkgversion='corev-openhw-gcc-xheep-20240530-${{ matrix.flavor.name }}'
 
-          # Make eseguito senza sudo (cartella /opt già di proprietà dell'utente)
-          # Aggiunto -g0 per rimuovere i simboli di debug dalle librerie e velocizzare
           make -j"$(nproc)" \
             HOST="${{ matrix.host.host_triplet }}" \
             BUILD="x86_64-linux-gnu" \
@@ -343,6 +345,6 @@ jobs:
           gh release create latest \
             *.tar.gz \
             --title "Latest RISC-V Toolchain (Split Matrix)" \
-            --notes "Toolchains compilati separatamente per evitare il timeout di 6 ore. Run ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
+            --notes "Toolchains natively compiled via GitHub Actions. Separated to avoid 6-hour timeouts. Run ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
