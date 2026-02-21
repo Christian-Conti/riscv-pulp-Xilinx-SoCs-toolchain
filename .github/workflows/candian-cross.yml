@@ -16,6 +16,7 @@ env:
 
 jobs:
   build-toolchain:
+    name: build (${{ matrix.host.arch_label }} / ${{ matrix.flavor.name }} / ${{ matrix.flavor.arch }}-${{ matrix.flavor.abi }})
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
@@ -44,47 +45,62 @@ jobs:
             arch: rv32emac
             abi: ilp32e
             multilibs: "rv32e-ilp32e--c rv32ea-ilp32e--m rv32em-ilp32e--c rv32eac-ilp32e-- rv32emac-ilp32e--"
+            disable_hwloop: false
 
           - name: rv32i-imac
             arch: rv32imac
             abi: ilp32
             multilibs: "rv32i-ilp32--c rv32ia-ilp32--m rv32im-ilp32--c rv32iac-ilp32-- rv32imac-ilp32--"
+            disable_hwloop: false
 
           - name: rv32-float
             arch: rv32imafdc
             abi: ilp32d
             multilibs: "rv32if-ilp32f-rv32ifd-c rv32iaf-ilp32f-rv32imaf,rv32iafc-d rv32imf-ilp32f-rv32imfd-c rv32imafc-ilp32f-rv32imafdc- rv32ifd-ilp32d--c rv32imfd-ilp32d--c rv32iafd-ilp32d-rv32imafd,rv32iafdc- rv32imafdc-ilp32d--"
+            disable_hwloop: false
 
           - name: rv64i-imac
             arch: rv64imac
             abi: lp64
             multilibs: "rv64i-lp64--c rv64ia-lp64--m rv64im-lp64--c rv64iac-lp64-- rv64imac-lp64--"
+            disable_hwloop: false
 
           - name: rv64-float
             arch: rv64imafdc
             abi: lp64d
             multilibs: "rv64if-lp64f-rv64ifd-c rv64iaf-lp64f-rv64imaf,rv64iafc-d rv64imf-lp64f-rv64imfd-c rv64imafc-lp64f-rv64imafdc- rv64ifd-lp64d--m,c rv64iafd-lp64d-rv64imafd,rv64iafdc- rv64imafdc-lp64d--"
+            disable_hwloop: false
 
           - name: xheep-base
             arch: rv32imc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip
             abi: ilp32
             multilibs: "rv32im_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32--"
+            disable_hwloop: true
 
           - name: xheep-float
             arch: rv32imfc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip
             abi: ilp32f
             multilibs: "rv32imf_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32f-- rv32imfc_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32f--"
+            disable_hwloop: true
 
           - name: xheep-zfinx
             arch: rv32imc_zfinx_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip
             abi: ilp32
             multilibs: "rv32im_zfinx_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32-- rv32imc_zfinx_xcvhwlp_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip-ilp32--"
+            disable_hwloop: true
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: Set build metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "CI_DATE=$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
+          echo "PKGVERSION=corev-openhw-gcc-ci-$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -164,11 +180,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-
           rm -rf riscv-gnu-toolchain
           export GIT_TERMINAL_PROMPT=0
 
-          # Remove any leftover auth headers/rewrites that could poison fetches
+          # Avoid poisoned auth headers/rewrites
           git config --global --unset-all http.https://github.com/.extraheader || true
           git config --global --unset-all url."https://x-access-token:${GH_TOKEN:-}@github.com/".insteadOf || true
           git config --global --unset-all url."https://x-access-token:@github.com/".insteadOf || true
@@ -178,12 +193,11 @@ jobs:
           git clone --depth 1 https://github.com/riscv-collab/riscv-gnu-toolchain.git
           cd riscv-gnu-toolchain
 
-          # Force submodules to Sourceware upstreams
+          # Force submodules to Sourceware upstreams (avoid GitHub mirrors)
           git config -f .gitmodules submodule.binutils.url https://sourceware.org/git/binutils-gdb.git
           git config -f .gitmodules submodule.newlib.url   https://sourceware.org/git/newlib-cygwin.git
 
           git submodule sync --recursive
-
           for attempt in 1 2 3 4 5; do
             if git submodule update --init --depth 1 --jobs 8 gcc binutils newlib; then
               break
@@ -195,6 +209,7 @@ jobs:
             fi
           done
 
+          # Switch GCC and binutils to CORE-V forks (development branch)
           cd gcc
           git remote add corev https://github.com/openhwgroup/corev-gcc.git || true
           git fetch --depth 1 corev development
@@ -215,7 +230,7 @@ jobs:
           sudo mkdir -p "${PREFIX}"
           sudo chown -R "$USER:$USER" /opt
 
-      - name: Configure + Build
+      - name: Configure + Build (newlib only)
         shell: bash
         run: |
           set -euo pipefail
@@ -252,13 +267,18 @@ jobs:
             --with-arch=${{ matrix.flavor.arch }} \
             --with-abi=${{ matrix.flavor.abi }} \
             --with-bugurl="https://github.com/Christian-Conti/riscv-Xilinx-SoCs-toolchain" \
-            --with-pkgversion="corev-openhw-gcc-rolling-${{ matrix.flavor.name }}"
+            --with-pkgversion="${PKGVERSION}"
+
+          TARGET_CFLAGS="-Os -g0"
+          if [[ "${{ matrix.flavor.disable_hwloop }}" == "true" ]]; then
+            TARGET_CFLAGS="${TARGET_CFLAGS} -mno-hwloop"
+          fi
 
           make -j"$(nproc)" newlib \
             HOST="${{ matrix.host.host_triplet }}" \
             BUILD="x86_64-linux-gnu" \
-            CFLAGS_FOR_TARGET="-Os -g0" \
-            CXXFLAGS_FOR_TARGET="-Os -g0"
+            CFLAGS_FOR_TARGET="${TARGET_CFLAGS}" \
+            CXXFLAGS_FOR_TARGET="${TARGET_CFLAGS}"
 
       - name: Verify toolchain host binary architecture
         shell: bash
@@ -291,17 +311,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          OUT="riscv-toolchain-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}.tar.gz"
+          OUT="riscv-toolchain-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}-${CI_DATE}.tar.gz"
           tar -C /opt -czf "$OUT" "riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: riscv-toolchain-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}
-          path: riscv-toolchain-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}.tar.gz
+          name: riscv-toolchain-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}-${{ env.CI_DATE }}
+          path: riscv-toolchain-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}-${{ env.CI_DATE }}.tar.gz
           compression-level: 6
 
   publish-rolling-release:
+    name: publish (latest)
     needs: build-toolchain
     runs-on: ubuntu-22.04
     steps:
@@ -309,6 +330,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: Set build metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "CI_DATE=$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
+          echo "PKGVERSION=corev-openhw-gcc-ci-$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -332,4 +360,4 @@ jobs:
           gh release create latest \
             *.tar.gz \
             --title "Latest RISC-V Toolchain (Split Flavors)" \
-            --notes "Toolchains built via GitHub Actions. Run ${{ github.run_number }}, $(date -u +'%Y-%m-%d %H:%M UTC')."
+            --notes "Toolchains built via GitHub Actions. Build date ${CI_DATE} (UTC)."
