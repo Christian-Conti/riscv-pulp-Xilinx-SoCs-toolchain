@@ -114,20 +114,20 @@ jobs:
               SIGNED_BY="/usr/share/keyrings/ubuntu-archive-keyring.gpg"
             fi
             sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null <<EOF
-Types: deb
-URIs: http://archive.ubuntu.com/ubuntu
-Suites: jammy jammy-updates jammy-backports
-Components: main restricted universe multiverse
-Architectures: amd64
-Signed-By: ${SIGNED_BY}
-
-Types: deb
-URIs: http://security.ubuntu.com/ubuntu
-Suites: jammy-security
-Components: main restricted universe multiverse
-Architectures: amd64
-Signed-By: ${SIGNED_BY}
-EOF
+          Types: deb
+          URIs: http://archive.ubuntu.com/ubuntu
+          Suites: jammy jammy-updates jammy-backports
+          Components: main restricted universe multiverse
+          Architectures: amd64
+          Signed-By: ${SIGNED_BY}
+          
+          Types: deb
+          URIs: http://security.ubuntu.com/ubuntu
+          Suites: jammy-security
+          Components: main restricted universe multiverse
+          Architectures: amd64
+          Signed-By: ${SIGNED_BY}
+          EOF
           else
             if [[ -f /etc/apt/sources.list ]]; then
               sudo sed -i -E 's/^deb(\s+)/deb [arch=amd64]\1/' /etc/apt/sources.list
@@ -135,10 +135,10 @@ EOF
           fi
           sudo dpkg --add-architecture "${{ matrix.host.foreign_arch }}"
           sudo tee "/etc/apt/sources.list.d/ubuntu-ports-${{ matrix.host.foreign_arch }}.list" >/dev/null <<EOF
-deb [arch=${{ matrix.host.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
-deb [arch=${{ matrix.host.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
-deb [arch=${{ matrix.host.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
-EOF
+          deb [arch=${{ matrix.host.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
+          deb [arch=${{ matrix.host.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
+          deb [arch=${{ matrix.host.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
+          EOF
           sudo apt-get update -y --allow-releaseinfo-change
 
       - name: Install host (foreign-arch) dev libs
@@ -261,8 +261,8 @@ EOF
           PREFIX="/opt/riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}"
           export PATH="${PREFIX}/bin:${PATH}"
           cat > rvtest.c <<'EOF'
-int add(int a,int b){ return a+b; }
-EOF
+          int add(int a,int b){ return a+b; }
+          EOF
           COMPILER=$(find "${PREFIX}/bin" -maxdepth 1 -type f -name "*-gcc" | head -n 1)
           test -n "${COMPILER}"
           "${COMPILER}" -march=${{ matrix.flavor.arch }} -mabi=${{ matrix.flavor.abi }} -c -o rvtest.o rvtest.c
