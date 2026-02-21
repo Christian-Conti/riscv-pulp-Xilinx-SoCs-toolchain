@@ -16,7 +16,7 @@ env:
 
 jobs:
   build-toolchain:
-    name: build (${{ matrix.host.arch_label }} / ${{ matrix.flavor.name }} / ${{ matrix.flavor.arch }}-${{ matrix.flavor.abi }})
+    name: 🏗️ build (${{ matrix.host.arch_label }} / ${{ matrix.flavor.name }} / ${{ matrix.flavor.arch }}-${{ matrix.flavor.abi }})
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
@@ -90,25 +90,25 @@ jobs:
             disable_hwloop: true
 
     steps:
-      - name: Checkout Repository
+      - name: 🧾 Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Set build metadata
+      - name: 🏷️ Set build metadata
         shell: bash
         run: |
           set -euo pipefail
           echo "CI_DATE=$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
           echo "PKGVERSION=corev-openhw-gcc-ci-$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
 
-      - name: Setup ccache
+      - name: ⚡ Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}
           max-size: 4G
 
-      - name: Install base dependencies
+      - name: 📦 Install base dependencies
         shell: bash
         run: |
           set -euo pipefail
@@ -116,11 +116,12 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             autoconf automake autotools-dev curl gawk build-essential bison flex texinfo gperf libtool patchutils bc \
             zlib1g-dev libexpat-dev git ca-certificates \
+            gettext \
             qemu-user-static binfmt-support \
             "${{ matrix.host.gcc_pkg }}" "${{ matrix.host.gxx_pkg }}" "${{ matrix.host.binutils_pkg }}" \
             libgmp-dev libmpfr-dev libmpc-dev
 
-      - name: Configure APT sources for multiarch
+      - name: 🧩 Configure APT sources for multiarch
         shell: bash
         run: |
           set -euo pipefail
@@ -157,7 +158,7 @@ jobs:
           EOF
           sudo apt-get update -y --allow-releaseinfo-change
 
-      - name: Install host (foreign-arch) dev libs
+      - name: 🧱 Install host (foreign-arch) dev libs
         shell: bash
         run: |
           set -euo pipefail
@@ -168,13 +169,13 @@ jobs:
             "zlib1g-dev:${{ matrix.host.foreign_arch }}" \
             "libexpat1-dev:${{ matrix.host.foreign_arch }}"
 
-      - name: Enable binfmt for QEMU
+      - name: 🤖 Enable binfmt for QEMU
         shell: bash
         run: |
           set -euo pipefail
           sudo update-binfmts --enable "${{ matrix.host.qemu_binfmt }}" || true
 
-      - name: Fetch sources (minimal)
+      - name: 🌐 Fetch sources (+ gdb)
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -188,7 +189,9 @@ jobs:
           git config --global --unset-all url."https://x-access-token:${GH_TOKEN:-}@github.com/".insteadOf || true
           git config --global --unset-all url."https://x-access-token:@github.com/".insteadOf || true
 
-          git config --global fetch.parallel 8
+          # Reduce transient fetch issues
+          git config --global http.version HTTP/1.1
+          git config --global fetch.parallel 4
 
           git clone --depth 1 https://github.com/riscv-collab/riscv-gnu-toolchain.git
           cd riscv-gnu-toolchain
@@ -198,13 +201,27 @@ jobs:
           git config -f .gitmodules submodule.newlib.url   https://sourceware.org/git/newlib-cygwin.git
 
           git submodule sync --recursive
+
+          # Shallow is fine for gcc/binutils/newlib
           for attempt in 1 2 3 4 5; do
             if git submodule update --init --depth 1 --jobs 8 gcc binutils newlib; then
               break
             fi
-            sleep 10
+            sleep $((attempt * 10))
             if [[ "${attempt}" -eq 5 ]]; then
-              echo "Submodule update failed after ${attempt} attempts"
+              echo "Submodule update (gcc/binutils/newlib) failed after ${attempt} attempts"
+              exit 1
+            fi
+          done
+
+          # gdb: avoid shallow (pinned commits can be outside depth window, plus 502 flakiness)
+          for attempt in 1 2 3 4 5; do
+            if git submodule update --init --jobs 2 gdb; then
+              break
+            fi
+            sleep $((attempt * 15))
+            if [[ "${attempt}" -eq 5 ]]; then
+              echo "Submodule update (gdb) failed after ${attempt} attempts"
               exit 1
             fi
           done
@@ -222,15 +239,15 @@ jobs:
           git checkout -B corev-development FETCH_HEAD
           cd ..
 
-      - name: Prepare /opt Directory
+      - name: 🗂️ Prepare /opt prefix
         shell: bash
         run: |
           set -euo pipefail
           PREFIX="/opt/riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}"
           sudo mkdir -p "${PREFIX}"
-          sudo chown -R "$USER:$USER" /opt
+          sudo chown -R "$USER:$USER" "${PREFIX}"
 
-      - name: Configure + Build (newlib only)
+      - name: 🛠️ Configure + Build (newlib + gdb)
         shell: bash
         run: |
           set -euo pipefail
@@ -280,7 +297,16 @@ jobs:
             CFLAGS_FOR_TARGET="${TARGET_CFLAGS}" \
             CXXFLAGS_FOR_TARGET="${TARGET_CFLAGS}"
 
-      - name: Verify toolchain host binary architecture
+          # Build gdb if supported by this riscv-gnu-toolchain checkout
+          if make -n gdb >/dev/null 2>&1; then
+            make -j"$(nproc)" gdb \
+              HOST="${{ matrix.host.host_triplet }}" \
+              BUILD="x86_64-linux-gnu" \
+              CFLAGS_FOR_TARGET="${TARGET_CFLAGS}" \
+              CXXFLAGS_FOR_TARGET="${TARGET_CFLAGS}"
+          fi
+
+      - name: 🔎 Verify toolchain host binary architecture
         shell: bash
         run: |
           set -euo pipefail
@@ -292,7 +318,7 @@ jobs:
           test -x "$BIN"
           file "$BIN" | grep -Eqi "${{ matrix.host.file_grep }}"
 
-      - name: Verify toolchain produces RISC-V ELF
+      - name: ✅ Verify toolchain produces RISC-V ELF
         shell: bash
         run: |
           set -euo pipefail
@@ -307,14 +333,14 @@ jobs:
           file rvtest.o | grep -qiE "ELF (32|64)-bit"
           readelf -h rvtest.o | grep -qi "Machine:.*RISC-V"
 
-      - name: Create TAR Archive
+      - name: 📦 Create TAR Archive
         shell: bash
         run: |
           set -euo pipefail
           OUT="riscv-toolchain-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}-${CI_DATE}.tar.gz"
           tar -C /opt -czf "$OUT" "riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}"
 
-      - name: Upload Artifact
+      - name: ☁️ Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: riscv-toolchain-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}-${{ env.CI_DATE }}
@@ -322,35 +348,35 @@ jobs:
           compression-level: 6
 
   publish-rolling-release:
-    name: publish (latest)
+    name: 🚀 publish (latest)
     needs: build-toolchain
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout Repository
+      - name: 🧾 Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Set build metadata
+      - name: 🏷️ Set build metadata
         shell: bash
         run: |
           set -euo pipefail
           echo "CI_DATE=$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
           echo "PKGVERSION=corev-openhw-gcc-ci-$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
 
-      - name: Download all artifacts
+      - name: ⬇️ Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
 
-      - name: Collect tarballs
+      - name: 🧺 Collect tarballs
         shell: bash
         run: |
           set -euo pipefail
           find dist -type f -name "*.tar.gz" -print -exec cp -f {} . \;
           ls -la *.tar.gz
 
-      - name: Publish rolling GitHub Release (latest)
+      - name: 🏷️ Publish rolling GitHub Release (latest)
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
