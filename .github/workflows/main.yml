@@ -66,7 +66,7 @@ jobs:
             abi: lp64d
             multilibs: "rv64if-lp64f-rv64ifd-c rv64iaf-lp64f-rv64imaf,rv64iafc-d rv64imf-lp64f-rv64imfd-c rv64imafc-lp64f-rv64imafdc- rv64ifd-lp64d--m,c rv64iafd-lp64d-rv64imafd,rv64iafdc- rv64imafdc-lp64d--"
 
-          # NOTE: xcvhwlp removed to avoid CORE-V GCC ICE in libbacktrace (no user flag exists to disable hwloop)
+          # NOTE: xcvhwlp removed to avoid CORE-V GCC ICE in libbacktrace
           - name: xheep-base
             arch: rv32imc_xcvmem_xcvmac_xcvbi_xcvalu_xcvsimd_xcvbitmanip
             abi: ilp32
@@ -121,7 +121,7 @@ jobs:
           FOREIGN_ARCH: ${{ matrix.host.foreign_arch }}
         run: bash scripts/install-host-libs.sh
 
-      - name: 🤖 Enable binfmt for QEMU + smoke test
+      - name: 🤖 Enable binfmt for QEMU (smoke test)
         shell: bash
         env:
           QEMU_BINFMT: ${{ matrix.host.qemu_binfmt }}
@@ -129,7 +129,7 @@ jobs:
           HOST_TRIPLET: ${{ matrix.host.host_triplet }}
         run: bash scripts/setup-binfmt.sh
 
-      - name: 🌐 Fetch sources (+ gdb)
+      - name: 🌐 Fetch sources
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -143,7 +143,7 @@ jobs:
           sudo mkdir -p "${PREFIX}"
           sudo chown -R "$USER:$USER" "${PREFIX}"
 
-      - name: 🛠️ Configure + Build (newlib + gdb)
+      - name: 🛠️ Configure + Build
         shell: bash
         env:
           PREFIX: /opt/riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}
