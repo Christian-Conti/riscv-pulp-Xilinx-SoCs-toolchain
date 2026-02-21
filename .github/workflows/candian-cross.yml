@@ -103,152 +103,37 @@ jobs:
 
       - name: 📦 Install base dependencies
         shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends \
-            autoconf automake autotools-dev curl gawk build-essential bison flex texinfo gperf libtool patchutils bc \
-            zlib1g-dev libexpat-dev git ca-certificates \
-            gettext \
-            qemu-user-static binfmt-support \
-            "${{ matrix.host.gcc_pkg }}" "${{ matrix.host.gxx_pkg }}" "${{ matrix.host.binutils_pkg }}" \
-            libgmp-dev libmpfr-dev libmpc-dev
+        env:
+          GCC_PKG: ${{ matrix.host.gcc_pkg }}
+          GXX_PKG: ${{ matrix.host.gxx_pkg }}
+          BINUTILS_PKG: ${{ matrix.host.binutils_pkg }}
+        run: bash scripts/setup-deps.sh
 
       - name: 🧩 Configure APT sources for multiarch
         shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
-            SIGNED_BY="$(awk -F': ' 'tolower($1)=="signed-by"{print $2; exit}' /etc/apt/sources.list.d/ubuntu.sources || true)"
-            if [[ -z "${SIGNED_BY}" ]]; then
-              SIGNED_BY="/usr/share/keyrings/ubuntu-archive-keyring.gpg"
-            fi
-            sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null <<EOF
-          Types: deb
-          URIs: http://archive.ubuntu.com/ubuntu
-          Suites: jammy jammy-updates jammy-backports
-          Components: main restricted universe multiverse
-          Architectures: amd64
-          Signed-By: ${SIGNED_BY}
-
-          Types: deb
-          URIs: http://security.ubuntu.com/ubuntu
-          Suites: jammy-security
-          Components: main restricted universe multiverse
-          Architectures: amd64
-          Signed-By: ${SIGNED_BY}
-          EOF
-          else
-            if [[ -f /etc/apt/sources.list ]]; then
-              sudo sed -i -E 's/^deb(\s+)/deb [arch=amd64]\1/' /etc/apt/sources.list
-            fi
-          fi
-          sudo dpkg --add-architecture "${{ matrix.host.foreign_arch }}"
-          sudo tee "/etc/apt/sources.list.d/ubuntu-ports-${{ matrix.host.foreign_arch }}.list" >/dev/null <<EOF
-          deb [arch=${{ matrix.host.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
-          deb [arch=${{ matrix.host.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
-          deb [arch=${{ matrix.host.foreign_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
-          EOF
-          sudo apt-get update -y --allow-releaseinfo-change
+        env:
+          FOREIGN_ARCH: ${{ matrix.host.foreign_arch }}
+        run: bash scripts/setup-apt-multiarch.sh
 
       - name: 🧱 Install host (foreign-arch) dev libs
         shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get install -y --no-install-recommends \
-            "libgmp-dev:${{ matrix.host.foreign_arch }}" \
-            "libmpfr-dev:${{ matrix.host.foreign_arch }}" \
-            "libmpc-dev:${{ matrix.host.foreign_arch }}" \
-            "zlib1g-dev:${{ matrix.host.foreign_arch }}" \
-            "libexpat1-dev:${{ matrix.host.foreign_arch }}"
+        env:
+          FOREIGN_ARCH: ${{ matrix.host.foreign_arch }}
+        run: bash scripts/install-host-libs.sh
 
       - name: 🤖 Enable binfmt for QEMU + smoke test
         shell: bash
-        run: |
-          set -euo pipefail
-
-          sudo modprobe binfmt_misc || true
-          if ! mount | grep -q "binfmt_misc on /proc/sys/fs/binfmt_misc"; then
-            sudo mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc || true
-          fi
-
-          sudo systemctl restart systemd-binfmt || true
-          sudo update-binfmts --enable "${{ matrix.host.qemu_binfmt }}" || true
-
-          sudo update-binfmts --display "${{ matrix.host.qemu_binfmt }}" || true
-          ls -la /proc/sys/fs/binfmt_misc || true
-
-          cat > /tmp/hello.c <<'EOF'
-          int main(){return 0;}
-          EOF
-
-          if [[ "${{ matrix.host.foreign_arch }}" == "armhf" ]]; then
-            arm-linux-gnueabihf-gcc -static /tmp/hello.c -o /tmp/hello_armhf
-            file /tmp/hello_armhf
-            /tmp/hello_armhf
-          else
-            aarch64-linux-gnu-gcc -static /tmp/hello.c -o /tmp/hello_aarch64
-            file /tmp/hello_aarch64
-            /tmp/hello_aarch64
-          fi
+        env:
+          QEMU_BINFMT: ${{ matrix.host.qemu_binfmt }}
+          FOREIGN_ARCH: ${{ matrix.host.foreign_arch }}
+          HOST_TRIPLET: ${{ matrix.host.host_triplet }}
+        run: bash scripts/setup-binfmt.sh
 
       - name: 🌐 Fetch sources (+ gdb)
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          rm -rf riscv-gnu-toolchain
-          export GIT_TERMINAL_PROMPT=0
-
-          git config --global --unset-all http.https://github.com/.extraheader || true
-          git config --global --unset-all url."https://x-access-token:${GH_TOKEN:-}@github.com/".insteadOf || true
-          git config --global --unset-all url."https://x-access-token:@github.com/".insteadOf || true
-
-          git config --global http.version HTTP/1.1
-          git config --global fetch.parallel 4
-
-          git clone --depth 1 https://github.com/riscv-collab/riscv-gnu-toolchain.git
-          cd riscv-gnu-toolchain
-
-          git config -f .gitmodules submodule.binutils.url https://sourceware.org/git/binutils-gdb.git
-          git config -f .gitmodules submodule.newlib.url   https://sourceware.org/git/newlib-cygwin.git
-
-          git submodule sync --recursive
-
-          for attempt in 1 2 3 4 5; do
-            if git submodule update --init --depth 1 --jobs 8 gcc binutils newlib; then
-              break
-            fi
-            sleep $((attempt * 10))
-            if [[ "${attempt}" -eq 5 ]]; then
-              echo "Submodule update (gcc/binutils/newlib) failed after ${attempt} attempts"
-              exit 1
-            fi
-          done
-
-          for attempt in 1 2 3 4 5; do
-            if git submodule update --init --jobs 2 gdb; then
-              break
-            fi
-            sleep $((attempt * 15))
-            if [[ "${attempt}" -eq 5 ]]; then
-              echo "Submodule update (gdb) failed after ${attempt} attempts"
-              exit 1
-            fi
-          done
-
-          cd gcc
-          git remote add corev https://github.com/openhwgroup/corev-gcc.git || true
-          git fetch --depth 1 corev development
-          git checkout -B corev-development FETCH_HEAD
-          cd ..
-
-          cd binutils
-          git remote add corev https://github.com/openhwgroup/corev-binutils-gdb.git || true
-          git fetch --depth 1 corev development
-          git checkout -B corev-development FETCH_HEAD
-          cd ..
+        run: bash scripts/fetch-sources.sh
 
       - name: 🗂️ Prepare /opt prefix
         shell: bash
@@ -260,85 +145,28 @@ jobs:
 
       - name: 🛠️ Configure + Build (newlib + gdb)
         shell: bash
-        run: |
-          set -euo pipefail
-          cd riscv-gnu-toolchain
-
-          export CC="ccache ${{ matrix.host.host_triplet }}-gcc"
-          export CXX="ccache ${{ matrix.host.host_triplet }}-g++"
-          export AR="${{ matrix.host.host_triplet }}-ar"
-          export RANLIB="${{ matrix.host.host_triplet }}-ranlib"
-          export CC_FOR_BUILD="ccache gcc"
-          export CXX_FOR_BUILD="ccache g++"
-
-          PREFIX="/opt/riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}"
-
-          ./configure \
-            --prefix="${PREFIX}" \
-            --host="${{ matrix.host.host_triplet }}" \
-            --build="x86_64-linux-gnu" \
-            --with-sysroot="${PREFIX}/riscv-corev-elf" \
-            --with-native-system-header-dir=/include \
-            --with-newlib \
-            --disable-shared \
-            --enable-languages=c,c++ \
-            --enable-tls \
-            --disable-werror \
-            --disable-libmudflap \
-            --disable-libssp \
-            --disable-quadmath \
-            --disable-libgomp \
-            --disable-nls \
-            --disable-libbacktrace \
-            --enable-multilib \
-            --with-multilib-generator="${{ matrix.flavor.multilibs }}" \
-            --with-arch=${{ matrix.flavor.arch }} \
-            --with-abi=${{ matrix.flavor.abi }} \
-            --with-bugurl="https://github.com/Christian-Conti/riscv-Xilinx-SoCs-toolchain" \
-            --with-pkgversion="${PKGVERSION}"
-
-          TARGET_CFLAGS="-Os -g0"
-
-          make -j"$(nproc)" newlib \
-            HOST="${{ matrix.host.host_triplet }}" \
-            BUILD="x86_64-linux-gnu" \
-            CFLAGS_FOR_TARGET="${TARGET_CFLAGS}" \
-            CXXFLAGS_FOR_TARGET="${TARGET_CFLAGS}"
-
-          if make -n gdb >/dev/null 2>&1; then
-            make -j"$(nproc)" gdb \
-              HOST="${{ matrix.host.host_triplet }}" \
-              BUILD="x86_64-linux-gnu" \
-              CFLAGS_FOR_TARGET="${TARGET_CFLAGS}" \
-              CXXFLAGS_FOR_TARGET="${TARGET_CFLAGS}"
-          fi
+        env:
+          PREFIX: /opt/riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}
+          HOST_TRIPLET: ${{ matrix.host.host_triplet }}
+          ARCH: ${{ matrix.flavor.arch }}
+          ABI: ${{ matrix.flavor.abi }}
+          MULTILIBS: ${{ matrix.flavor.multilibs }}
+        run: bash scripts/build-toolchain.sh
 
       - name: 🔎 Verify toolchain host binary architecture
         shell: bash
-        run: |
-          set -euo pipefail
-          PREFIX="/opt/riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}"
-          BIN="${PREFIX}/bin/riscv32-corev-elf-gcc"
-          if [[ ! -x "$BIN" ]]; then BIN="${PREFIX}/bin/riscv64-corev-elf-gcc"; fi
-          if [[ ! -x "$BIN" ]]; then BIN="${PREFIX}/bin/riscv32-unknown-elf-gcc"; fi
-          if [[ ! -x "$BIN" ]]; then BIN="${PREFIX}/bin/riscv64-unknown-elf-gcc"; fi
-          test -x "$BIN"
-          file "$BIN" | grep -Eqi "${{ matrix.host.file_grep }}"
+        env:
+          PREFIX: /opt/riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}
+          FILE_GREP: ${{ matrix.host.file_grep }}
+        run: bash scripts/verify-arch.sh
 
       - name: ✅ Verify toolchain produces RISC-V ELF
         shell: bash
-        run: |
-          set -euo pipefail
-          PREFIX="/opt/riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}"
-          export PATH="${PREFIX}/bin:${PATH}"
-          cat > rvtest.c <<'EOF'
-          int add(int a,int b){ return a+b; }
-          EOF
-          COMPILER="$(find "${PREFIX}/bin" -maxdepth 1 -type f -name "*-gcc" | head -n 1)"
-          test -n "${COMPILER}"
-          "${COMPILER}" -march=${{ matrix.flavor.arch }} -mabi=${{ matrix.flavor.abi }} -c -o rvtest.o rvtest.c
-          file rvtest.o | grep -qiE "ELF (32|64)-bit"
-          readelf -h rvtest.o | grep -qi "Machine:.*RISC-V"
+        env:
+          PREFIX: /opt/riscv-${{ matrix.host.arch_label }}-${{ matrix.flavor.name }}
+          ARCH: ${{ matrix.flavor.arch }}
+          ABI: ${{ matrix.flavor.abi }}
+        run: bash scripts/verify-riscv.sh
 
       - name: 📦 Create TAR Archive
         shell: bash
