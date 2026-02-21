@@ -1,4 +1,4 @@
-name: Build RISC-V Toolchain (Split Matrix for Timeout)
+name: Build RISC-V Toolchain
 
 on:
   workflow_dispatch:
@@ -187,6 +187,7 @@ jobs:
             --disable-quadmath \
             --disable-libgomp \
             --disable-nls \
+            --disable-libbacktrace \
             --enable-multilib \
             --with-multilib-generator="${{ matrix.flavor.multilibs }}" \
             --with-arch=${{ matrix.flavor.arch }} \
